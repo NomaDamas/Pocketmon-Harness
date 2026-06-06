@@ -9,6 +9,8 @@ import { findLatestRunId } from "./tui-summary";
 const DEFAULT_TRACE_ROOT = ".pss-mgba/traces";
 const DEFAULT_OUTPUT_ROOT = ".pss-mgba/improvements";
 const DIALOGUE_REASONING_PATTERN = /\b(dialogue|text|story|intro)\b/i;
+const NAME_ENTRY_REASONING_PATTERN =
+  /\b(name|keyboard|NEW NAME|RED|ASH|JACK|END)\b/i;
 const PROGRESSING_REASONING_PATTERN =
   /\b(progress|progressing|continuing)\b|advanc|visible text change|text changes/i;
 
@@ -21,7 +23,7 @@ export interface TraceImprovementCandidate {
   candidateId: string;
   evidence: string[];
   patch: {
-    action: "avoid-repeated-action";
+    action: "avoid-no-progress-state" | "avoid-repeated-action";
     evaluatorGate: string;
     minimumFailures: number;
     recommendation: string;
@@ -59,6 +61,32 @@ export async function improveLatestTrace({
 }: ImproveLatestTraceOptions = {}): Promise<TraceImprovementResult> {
   const resolvedRunId = runId ?? (await findLatestRunId(traceRoot));
   const trace = await loadTraceEvidence(traceRoot, resolvedRunId);
+  const noProgressState = detectNoProgressState(trace);
+  if (noProgressState && !isProgressingDialogue(trace)) {
+    const candidate: TraceImprovementCandidate = {
+      audit: {
+        createdAt: now.toISOString(),
+        runId: resolvedRunId,
+        source: "trace-self-improvement",
+      },
+      candidateId: `candidate:${resolvedRunId}.avoid-no-progress-state`,
+      evidence: [
+        `sameState=${noProgressState.stateKey}`,
+        `observationCount=${noProgressState.count}`,
+        `uniqueActionCount=${noProgressState.uniqueActionCount}`,
+        `actions=${noProgressState.actions.join(",")}`,
+      ],
+      patch: {
+        action: "avoid-no-progress-state",
+        evaluatorGate: "trace-self-improvement.no-progress-state",
+        minimumFailures: 3,
+        recommendation: noProgressRecommendation(trace),
+      },
+      status: "candidate",
+    };
+    return await writeCandidate(outputRoot, resolvedRunId, candidate);
+  }
+
   const evaluation = evaluateStage1RepeatedActionScore({
     history: trace.actions,
     metadata: {
@@ -105,21 +133,13 @@ export async function improveLatestTrace({
     },
     status: "candidate",
   };
-  await mkdir(outputRoot, { recursive: true });
-  const outputPath = join(outputRoot, `${resolvedRunId}.candidate.json`);
-  await writeFile(outputPath, `${JSON.stringify(candidate, null, 2)}\n`);
-
-  return {
-    candidate,
-    outputPath,
-    runId: resolvedRunId,
-    status: "candidate-written",
-  };
+  return await writeCandidate(outputRoot, resolvedRunId, candidate);
 }
 
 interface TraceEvidence {
   actions: Stage1RepeatedActionHistoryEntry[];
   assistantReasoning: string[];
+  observations: string[];
 }
 
 async function loadTraceEvidence(
@@ -130,9 +150,22 @@ async function loadTraceEvidence(
   const records = await readJsonl(eventsPath);
   const actions: Stage1RepeatedActionHistoryEntry[] = [];
   const assistantReasoning: string[] = [];
+  const observations: string[] = [];
 
   for (const record of records) {
     const summary = asRecord(record.summary);
+    if (record.type === "observation") {
+      const state = asRecord(record.pokemonState);
+      const position = asRecord(state?.position);
+      if (
+        typeof state?.mapId === "number" &&
+        typeof position?.x === "number" &&
+        typeof position.y === "number"
+      ) {
+        observations.push(`map=${state.mapId} x=${position.x} y=${position.y}`);
+      }
+      continue;
+    }
     if (record.type !== "agent-event") {
       continue;
     }
@@ -157,6 +190,66 @@ async function loadTraceEvidence(
   return {
     actions,
     assistantReasoning,
+    observations,
+  };
+}
+
+function detectNoProgressState(trace: TraceEvidence):
+  | {
+      actions: string[];
+      count: number;
+      stateKey: string;
+      uniqueActionCount: number;
+    }
+  | undefined {
+  const latestState = trace.observations.at(-1);
+  if (!latestState) {
+    return;
+  }
+  const count = trace.observations.filter(
+    (state) => state === latestState
+  ).length;
+  if (count < 3) {
+    return;
+  }
+  const actions = trace.actions
+    .slice(-count)
+    .map((action) => action.action)
+    .filter((action): action is string => typeof action === "string");
+  const uniqueActionCount = new Set(actions).size;
+  if (uniqueActionCount < 2) {
+    return;
+  }
+  return {
+    actions,
+    count,
+    stateKey: latestState,
+    uniqueActionCount,
+  };
+}
+
+function noProgressRecommendation(trace: TraceEvidence): string {
+  const reasoning = trace.assistantReasoning.slice(-8).join(" ");
+  if (NAME_ENTRY_REASONING_PATTERN.test(reasoning)) {
+    return "Name-entry recovery: prefer default menu choices such as RED; if the custom keyboard opens, navigate to END and confirm instead of alternating A/B or adding random letters.";
+  }
+  return "When three or more observations remain on the same map/x/y with mixed actions, switch to a known mode-specific rule or deterministic recovery sequence instead of continuing free-form probing.";
+}
+
+async function writeCandidate(
+  outputRoot: string,
+  runId: string,
+  candidate: TraceImprovementCandidate
+): Promise<TraceImprovementResult> {
+  await mkdir(outputRoot, { recursive: true });
+  const outputPath = join(outputRoot, `${runId}.candidate.json`);
+  await writeFile(outputPath, `${JSON.stringify(candidate, null, 2)}\n`);
+
+  return {
+    candidate,
+    outputPath,
+    runId,
+    status: "candidate-written",
   };
 }
 

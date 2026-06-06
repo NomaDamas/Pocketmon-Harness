@@ -1,7 +1,23 @@
-import type { TokenUsageMetric, ViewerEvent, ViewerRun } from "./types";
+import type {
+  StrategyBook,
+  TokenUsageMetric,
+  ViewerEmulatorSlot,
+  ViewerEvent,
+  ViewerRun,
+} from "./types";
+
+export function fetchEmulators(
+  signal?: AbortSignal
+): Promise<ViewerEmulatorSlot[]> {
+  return fetchJson<ViewerEmulatorSlot[]>("/api/emulators", signal);
+}
 
 export function fetchRuns(signal?: AbortSignal): Promise<ViewerRun[]> {
   return fetchJson<ViewerRun[]>("/api/runs", signal);
+}
+
+export function fetchStrategyBook(signal?: AbortSignal): Promise<StrategyBook> {
+  return fetchJson<StrategyBook>("/api/strategy-book", signal);
 }
 
 export function fetchRunEvents(

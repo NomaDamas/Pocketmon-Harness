@@ -104,6 +104,34 @@ export interface ViewerRun {
   turns?: number;
 }
 
+export interface ViewerEmulatorSlot {
+  baseUrl: string;
+  error?: string;
+  frame: number | null;
+  gameCode: string;
+  gameTitle: string;
+  index: number;
+  reachable: boolean;
+  screenshot?: ViewerEventScreenshot;
+}
+
+export interface StrategyBookEntry {
+  action: string;
+  candidateIds: string[];
+  evidenceCount: number;
+  lastSeenAt: string;
+  promoted: boolean;
+  recommendation: string;
+  sourceRuns: string[];
+}
+
+export interface StrategyBook {
+  error?: string;
+  generatedAt: string | null;
+  promotionThreshold: number | null;
+  strategies: StrategyBookEntry[];
+}
+
 export interface TokenUsageSnapshot {
   cacheReadTokens: number;
   cacheWriteTokens: number;

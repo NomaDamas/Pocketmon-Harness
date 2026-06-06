@@ -1,16 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { basename, extname, join, normalize, resolve, sep } from "node:path";
 import { DEFAULT_RUNS_DIR } from "./run-summary";
 import type { TokenUsageMetric } from "./token-usage";
 import { EVENTS_JSONL_FILENAME, type ViewerEvent } from "./viewer-events";
 
 export interface ViewerServerOptions {
+  emulatorPorts?: readonly number[];
   host: string;
   port: number;
   runsDir?: string;
   staticDir?: string;
+  strategyBookPath?: string;
 }
 
 export interface ViewerRun {
@@ -20,29 +24,49 @@ export interface ViewerRun {
   [key: string]: unknown;
 }
 
+export interface ViewerEmulatorSlot {
+  baseUrl: string;
+  error?: string;
+  frame: number | null;
+  gameCode: string;
+  gameTitle: string;
+  index: number;
+  reachable: boolean;
+  screenshot?: {
+    data: string;
+    mediaType: "image/png";
+  };
+}
+
 interface JsonError {
   error: string;
 }
 
+const DEFAULT_STRATEGY_BOOK_PATH = ".pss-mgba/strategy-book.json";
 const EVENTS_ROUTE_PATTERN = /^\/api\/runs\/([^/]+)\/events$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TOKEN_USAGE_JSONL_FILENAME = "token-usage.jsonl";
 const TOKENS_ROUTE_PATTERN = /^\/api\/runs\/([^/]+)\/tokens$/;
 
 export function startViewerServer({
+  emulatorPorts = [5000, 5001, 5002],
   host,
   port,
   runsDir = DEFAULT_RUNS_DIR,
+  strategyBookPath = DEFAULT_STRATEGY_BOOK_PATH,
   staticDir,
 }: ViewerServerOptions): Server {
   const server = createServer((request, response) => {
-    handleRequest(request.url ?? "/", response, { runsDir, staticDir }).catch(
-      (error: unknown) => {
-        writeJson(response, 500, {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    );
+    handleRequest(request.url ?? "/", response, {
+      emulatorPorts,
+      runsDir,
+      strategyBookPath,
+      staticDir,
+    }).catch((error: unknown) => {
+      writeJson(response, 500, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   });
 
   server.on("error", (error: NodeJS.ErrnoException) => {
@@ -74,7 +98,10 @@ export function startViewerServer({
 async function handleRequest(
   rawUrl: string,
   response: ServerResponse,
-  options: Pick<ViewerServerOptions, "runsDir" | "staticDir">
+  options: Pick<
+    ViewerServerOptions,
+    "emulatorPorts" | "runsDir" | "staticDir" | "strategyBookPath"
+  >
 ): Promise<void> {
   const url = new URL(rawUrl, "http://127.0.0.1");
   const path = decodeURIComponent(url.pathname);
@@ -89,6 +116,26 @@ async function handleRequest(
       response,
       200,
       await readRuns(options.runsDir ?? DEFAULT_RUNS_DIR)
+    );
+    return;
+  }
+
+  if (path === "/api/emulators") {
+    writeJson(
+      response,
+      200,
+      await readEmulatorSlots(options.emulatorPorts ?? [5000, 5001, 5002])
+    );
+    return;
+  }
+
+  if (path === "/api/strategy-book") {
+    writeJson(
+      response,
+      200,
+      await readStrategyBook(
+        options.strategyBookPath ?? DEFAULT_STRATEGY_BOOK_PATH
+      )
     );
     return;
   }
@@ -138,6 +185,112 @@ async function handleRequest(
   }
 
   writeJson(response, 404, { error: "not found" });
+}
+
+async function readStrategyBook(
+  path: string
+): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && hasCode(error, "ENOENT")) {
+      return {
+        generatedAt: null,
+        promotionThreshold: null,
+        strategies: [],
+      };
+    }
+    if (error instanceof SyntaxError) {
+      return {
+        error: "malformed strategy book",
+        generatedAt: null,
+        promotionThreshold: null,
+        strategies: [],
+      };
+    }
+    throw error;
+  }
+}
+
+function readEmulatorSlots(
+  ports: readonly number[]
+): Promise<ViewerEmulatorSlot[]> {
+  return Promise.all(
+    ports.map((port, index) => readEmulatorSlot({ index, port }))
+  );
+}
+
+async function readEmulatorSlot({
+  index,
+  port,
+}: {
+  index: number;
+  port: number;
+}): Promise<ViewerEmulatorSlot> {
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1200);
+  try {
+    const [frameText, gameCode, gameTitle, screenshot] = await Promise.all([
+      fetchText(`${baseUrl}/core/currentframe`, controller.signal),
+      fetchText(`${baseUrl}/core/getgamecode`, controller.signal),
+      fetchText(`${baseUrl}/core/getgametitle`, controller.signal),
+      fetchEmulatorScreenshot(baseUrl, controller.signal),
+    ]);
+    const frame = Number.parseInt(frameText, 10);
+    return {
+      baseUrl,
+      frame: Number.isFinite(frame) ? frame : null,
+      gameCode,
+      gameTitle,
+      index,
+      reachable: true,
+      screenshot,
+    };
+  } catch (error) {
+    return {
+      baseUrl,
+      error: error instanceof Error ? error.message : String(error),
+      frame: null,
+      gameCode: "",
+      gameTitle: "",
+      index,
+      reachable: false,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchEmulatorScreenshot(
+  baseUrl: string,
+  signal: AbortSignal
+): Promise<ViewerEmulatorSlot["screenshot"]> {
+  const directory = join(tmpdir(), "pss-mgba-viewer-emulators");
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, `${randomUUID()}.png`);
+  await fetchText(
+    `${baseUrl}/core/screenshot?path=${encodeURIComponent(path)}`,
+    signal,
+    "POST"
+  );
+  return {
+    data: (await readFile(path)).toString("base64"),
+    mediaType: "image/png",
+  };
+}
+
+async function fetchText(
+  url: string,
+  signal: AbortSignal,
+  method: "GET" | "POST" = "GET"
+): Promise<string> {
+  const response = await fetch(url, { method, signal });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+  }
+  return body.trim();
 }
 
 async function readRuns(runsDir: string): Promise<ViewerRun[]> {

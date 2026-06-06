@@ -1,8 +1,10 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Agent, type SessionHandle } from "@minpeter/pss-runtime";
-import { env, getAiRuntimeConfig } from "./env";
+import { env, getMicroAiRuntimeConfig } from "./env";
+import { readLatestImprovementHints } from "./improvement-hints";
 import { startMetricsServer } from "./metrics-server";
 import { MgbaHttpClient } from "./mgba-http";
+import { chooseNameEntryRecoveryAction } from "./name-entry-recovery";
 import {
   captureMgbaObservation,
   createObservedInput,
@@ -27,7 +29,7 @@ import { createTrackedModel, TokenUsageTracker } from "./token-usage";
 import { createMgbaControlPlane, describeMgbaControlPlane } from "./tools";
 import { createViewerEventRecorder } from "./viewer-recorder";
 
-const aiRuntimeConfig = getAiRuntimeConfig();
+const aiRuntimeConfig = getMicroAiRuntimeConfig();
 const provider = createOpenAICompatible({
   apiKey: aiRuntimeConfig.apiKey,
   baseURL: aiRuntimeConfig.baseURL,
@@ -97,6 +99,7 @@ const agent = await Agent.create({
       await recordStepObservation(observation);
       await session.steer(
         createObservedInput({
+          improvementHints: await readLatestImprovementHints(),
           observation,
           recentActions,
           stuckMemory: stuckMemory.snapshot(),
@@ -109,6 +112,7 @@ const agent = await Agent.create({
       await recordTurnObservation(observation);
       await session.steer(
         createObservedInput({
+          improvementHints: await readLatestImprovementHints(),
           observation,
           recentActions,
           stuckMemory: stuckMemory.snapshot(),
@@ -130,8 +134,14 @@ session = agent.session("pokemon-run");
 
 while (true) {
   turnsRun += 1;
-  tokenUsageTracker.startTurn(turnsRun);
   observationBookkeeping.clearCurrentObservation();
+
+  if (await tryExecuteDeterministicRecovery()) {
+    await persistRunMetricsMetadata();
+    continue;
+  }
+
+  tokenUsageTracker.startTurn(turnsRun);
 
   const run = await session.send(createTurnPrompt(turnsRun));
   await streamSupervisedRun({
@@ -149,6 +159,50 @@ while (true) {
   });
   await tokenUsageTracker.endTurn();
   await persistRunMetricsMetadata();
+}
+
+async function tryExecuteDeterministicRecovery(): Promise<boolean> {
+  const observation = await captureMgbaObservation(mgbaClient);
+  const recoveryAction = chooseNameEntryRecoveryAction(
+    observation.state,
+    recentActions
+  );
+  if (!recoveryAction) {
+    return false;
+  }
+
+  await recordTurnObservation(observation);
+  const actionPlan = {
+    text: `<action_plan>${recoveryAction.reason}; execute ${recoveryAction.toolName} ${recoveryAction.button} before calling the LLM.</action_plan>`,
+    type: "assistant-text",
+  } as const;
+  const toolCall = {
+    input: { button: recoveryAction.button },
+    toolCallId: `deterministic-name-entry-${turnsRun}`,
+    toolName: recoveryAction.toolName,
+    type: "tool-call",
+  } as const;
+  const output = await mgbaClient.tap(recoveryAction.button);
+  const toolResult = {
+    output: { ok: true, output },
+    toolCallId: `deterministic-name-entry-${turnsRun}`,
+    toolName: recoveryAction.toolName,
+    type: "tool-result",
+  } as const;
+
+  for (const event of [actionPlan, toolCall, toolResult] as const) {
+    runMetricsTracker.recordEvent(event);
+    observationBookkeeping.recordEvent(event, turnsRun);
+    recordRecentAction(event, recentActions);
+    prettyLogger.event(event as never);
+    fireAndReportViewerWrite(
+      viewerEventRecorder.recordEvent(event, { turn: turnsRun })
+    );
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await recordStepObservation(await captureMgbaObservation(mgbaClient));
+  return true;
 }
 
 async function recordTurnObservation(

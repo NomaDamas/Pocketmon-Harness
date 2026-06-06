@@ -20,7 +20,10 @@
     "check": "ultracite check",
     "fix": "ultracite fix",
     "improve:trace": "tsx src/self-improvement.ts",
+    "improve:watch": "tsx src/self-improvement-watch.ts",
+    "strategy:update": "tsx src/strategy-book.ts",
     "parallel:run": "tsx src/parallel-runner.ts",
+    "stage1:fast": "tsx src/stage1-fast-autopilot.ts",
     "trace:report": "tsx src/trace-report.ts"
   },
   "engines": {

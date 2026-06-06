@@ -10,6 +10,7 @@ describe("resolveAiRuntimeConfig", () => {
       })
     ).toMatchObject({
       baseURL: "https://example.test/v1",
+      microModel: AI_PROVIDER_PRESETS["openai-compatible"].microModel,
       model: AI_PROVIDER_PRESETS["openai-compatible"].model,
       provider: "openai-compatible",
     });
@@ -23,6 +24,7 @@ describe("resolveAiRuntimeConfig", () => {
       })
     ).toMatchObject({
       baseURL: "https://example.test/v1",
+      microModel: AI_PROVIDER_PRESETS.grok.microModel,
       model: AI_PROVIDER_PRESETS.grok.model,
       provider: "grok",
     });
@@ -39,12 +41,14 @@ describe("resolveAiRuntimeConfig", () => {
       resolveAiRuntimeConfig({
         apiKey: "test-key",
         baseURL: "https://example.test/v1",
+        microModel: "fast-model",
         model: "custom-model",
         provider: "grok",
       })
     ).toEqual({
       apiKey: "test-key",
       baseURL: "https://example.test/v1",
+      microModel: "fast-model",
       model: "custom-model",
       provider: "grok",
     });

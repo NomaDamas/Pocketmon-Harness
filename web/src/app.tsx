@@ -1,12 +1,21 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchRunEvents, fetchRuns, fetchRunTokens } from "./api";
+import {
+  fetchEmulators,
+  fetchRunEvents,
+  fetchRuns,
+  fetchRunTokens,
+  fetchStrategyBook,
+} from "./api";
 import type {
+  AgentViewerEvent,
   ObservationViewerEvent,
   PokemonStateObservation,
+  StrategyBook,
   TokenUsageMetric,
   TokenUsageSnapshot,
   TurnTrace,
+  ViewerEmulatorSlot,
   ViewerEvent,
   ViewerEventSummary,
   ViewerRun,
@@ -29,18 +38,32 @@ const emptyDetailState: DetailState = {
   tokens: [],
 };
 
+type ParallelDetailState = Record<string, DetailState>;
+
 export default function App() {
   const [runs, setRuns] = useState<ViewerRun[]>([]);
+  const [emulators, setEmulators] = useState<ViewerEmulatorSlot[]>([]);
+  const [strategyBook, setStrategyBook] = useState<StrategyBook>();
   const [runsError, setRunsError] = useState<string>();
+  const [emulatorsError, setEmulatorsError] = useState<string>();
+  const [strategyBookError, setStrategyBookError] = useState<string>();
   const [runsLoadState, setRunsLoadState] = useState<LoadState>("loading");
+  const [emulatorsLoadState, setEmulatorsLoadState] =
+    useState<LoadState>("loading");
+  const [strategyBookLoadState, setStrategyBookLoadState] =
+    useState<LoadState>("loading");
   const [selectedRunId, setSelectedRunId] = useState<string>();
   const [detail, setDetail] = useState<DetailState>(emptyDetailState);
+  const [parallelDetails, setParallelDetails] = useState<ParallelDetailState>(
+    {}
+  );
   const [liveReloadEnabled, setLiveReloadEnabled] = useState(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>();
   const [refreshing, setRefreshing] = useState(false);
   const selectedRunIdRef = useRef<string | undefined>(selectedRunId);
   const liveReloadEnabledRef = useRef(liveReloadEnabled);
   const runsRequestRef = useRef(0);
+  const emulatorsRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const livePollControllerRef = useRef<AbortController | undefined>(undefined);
   const manualRefreshControllerRef = useRef<AbortController | undefined>(
@@ -123,6 +146,84 @@ export default function App() {
     []
   );
 
+  const loadEmulators = useCallback(
+    async ({
+      requireLive = false,
+      signal,
+      silent = false,
+    }: {
+      requireLive?: boolean;
+      signal?: AbortSignal;
+      silent?: boolean;
+    } = {}) => {
+      const requestId = emulatorsRequestRef.current + 1;
+      emulatorsRequestRef.current = requestId;
+      if (!silent) {
+        setEmulatorsLoadState("loading");
+      }
+
+      try {
+        const nextEmulators = await fetchEmulators(signal);
+        if (
+          emulatorsRequestRef.current !== requestId ||
+          (requireLive && !liveReloadEnabledRef.current)
+        ) {
+          return;
+        }
+        setEmulators(nextEmulators);
+        setEmulatorsError(undefined);
+        setEmulatorsLoadState("ready");
+      } catch (error: unknown) {
+        if (
+          isAbortError(error) ||
+          emulatorsRequestRef.current !== requestId ||
+          (requireLive && !liveReloadEnabledRef.current)
+        ) {
+          return;
+        }
+        setEmulatorsError(errorMessage(error));
+        setEmulatorsLoadState("error");
+      }
+    },
+    []
+  );
+
+  const loadStrategyBook = useCallback(
+    async ({
+      requireLive = false,
+      signal,
+      silent = false,
+    }: {
+      requireLive?: boolean;
+      signal?: AbortSignal;
+      silent?: boolean;
+    } = {}) => {
+      if (!silent) {
+        setStrategyBookLoadState("loading");
+      }
+
+      try {
+        const nextStrategyBook = await fetchStrategyBook(signal);
+        if (requireLive && !liveReloadEnabledRef.current) {
+          return;
+        }
+        setStrategyBook(nextStrategyBook);
+        setStrategyBookError(undefined);
+        setStrategyBookLoadState("ready");
+      } catch (error: unknown) {
+        if (
+          isAbortError(error) ||
+          (requireLive && !liveReloadEnabledRef.current)
+        ) {
+          return;
+        }
+        setStrategyBookError(errorMessage(error));
+        setStrategyBookLoadState("error");
+      }
+    },
+    []
+  );
+
   const loadRunDetail = useCallback(
     async (
       runId: string,
@@ -192,9 +293,13 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    loadRuns({ signal: controller.signal }).catch(() => undefined);
+    Promise.all([
+      loadEmulators({ signal: controller.signal }),
+      loadRuns({ signal: controller.signal }),
+      loadStrategyBook({ signal: controller.signal }),
+    ]).catch(() => undefined);
     return () => controller.abort();
-  }, [loadRuns]);
+  }, [loadEmulators, loadRuns, loadStrategyBook]);
 
   useEffect(() => {
     selectedRunIdRef.current = selectedRunId;
@@ -209,6 +314,47 @@ export default function App() {
     );
     return () => controller.abort();
   }, [loadRunDetail, selectedRunId]);
+
+  useEffect(() => {
+    if (runs.length === 0) {
+      setParallelDetails({});
+      return;
+    }
+
+    const controller = new AbortController();
+    const boardRuns = runs.slice(0, 6);
+    Promise.all(
+      boardRuns.map(async (run) => {
+        const [events, tokens] = await Promise.all([
+          fetchRunEvents(run.runId, controller.signal),
+          fetchRunTokens(run.runId, controller.signal),
+        ]);
+        return [run.runId, { events, loadState: "ready", tokens }] as const;
+      })
+    )
+      .then((entries) => {
+        setParallelDetails(Object.fromEntries(entries));
+      })
+      .catch((error: unknown) => {
+        if (isAbortError(error)) {
+          return;
+        }
+        setParallelDetails(
+          Object.fromEntries(
+            boardRuns.map((run) => [
+              run.runId,
+              {
+                ...emptyDetailState,
+                error: errorMessage(error),
+                loadState: "error",
+              },
+            ])
+          )
+        );
+      });
+
+    return () => controller.abort();
+  }, [runs]);
 
   useEffect(() => {
     if (!liveReloadEnabled) {
@@ -226,7 +372,17 @@ export default function App() {
       const runId = selectedRunIdRef.current;
       setRefreshing(true);
       Promise.all([
+        loadEmulators({
+          requireLive: true,
+          signal: currentController.signal,
+          silent: true,
+        }),
         loadRuns({
+          requireLive: true,
+          signal: currentController.signal,
+          silent: true,
+        }),
+        loadStrategyBook({
           requireLive: true,
           signal: currentController.signal,
           silent: true,
@@ -265,6 +421,8 @@ export default function App() {
     liveReloadEnabled,
     loadRunDetail,
     loadRuns,
+    loadStrategyBook,
+    loadEmulators,
   ]);
 
   const handleSelectRun = useCallback((runId: string) => {
@@ -292,7 +450,9 @@ export default function App() {
     const runId = selectedRunIdRef.current;
     setRefreshing(true);
     Promise.all([
+      loadEmulators({ signal: controller.signal, silent: true }),
       loadRuns({ signal: controller.signal, silent: true }),
+      loadStrategyBook({ signal: controller.signal, silent: true }),
       runId
         ? loadRunDetail(runId, { signal: controller.signal, silent: true })
         : Promise.resolve(),
@@ -309,7 +469,13 @@ export default function App() {
         }
       })
       .catch(() => undefined);
-  }, [abortManualRefresh, loadRunDetail, loadRuns]);
+  }, [
+    abortManualRefresh,
+    loadEmulators,
+    loadRunDetail,
+    loadRuns,
+    loadStrategyBook,
+  ]);
 
   const selectedRun = runs.find((run) => run.runId === selectedRunId);
   const turns = useMemo(
@@ -340,6 +506,25 @@ export default function App() {
           </strong>
         </div>
       </header>
+
+      <EmulatorLiveBoard
+        emulators={emulators}
+        error={emulatorsError}
+        loadState={emulatorsLoadState}
+      />
+
+      <StrategyBookBoard
+        error={strategyBookError}
+        loadState={strategyBookLoadState}
+        strategyBook={strategyBook}
+      />
+
+      <ParallelRunBoard
+        details={parallelDetails}
+        onSelectRun={handleSelectRun}
+        runs={runs.slice(0, 6)}
+        selectedRunId={selectedRunId}
+      />
 
       <section className="workspace-grid">
         <aside className="run-rail">
@@ -460,6 +645,300 @@ function RunMetadata({
       </dl>
     </section>
   );
+}
+
+function EmulatorLiveBoard({
+  emulators,
+  error,
+  loadState,
+}: {
+  emulators: ViewerEmulatorSlot[];
+  error: string | undefined;
+  loadState: LoadState;
+}) {
+  return (
+    <section aria-label="실시간 에뮬레이터 보드" className="emulator-board">
+      <div className="panel-heading">
+        <p className="eyebrow">실시간 병렬 에뮬레이터</p>
+        <h2>눈으로 보는 mGBA 슬롯</h2>
+      </div>
+      {loadState === "loading" ? <TraceLoading /> : null}
+      {error ? (
+        <Notice text={error} title="에뮬레이터 API 오프라인" tone="danger" />
+      ) : null}
+      <div className="emulator-grid">
+        {emulators.map((emulator) => (
+          <article
+            className={`emulator-card ${emulator.reachable ? "online" : "offline"}`}
+            key={emulator.baseUrl}
+          >
+            <header className="emulator-card-header">
+              <div>
+                <p className="eyebrow">slot {emulator.index + 1}</p>
+                <h3>{emulator.baseUrl}</h3>
+              </div>
+              <span className="emulator-status">
+                {emulator.reachable ? "online" : "offline"}
+              </span>
+            </header>
+            <div className="emulator-screen-frame">
+              {emulator.screenshot ? (
+                <img
+                  alt={`${emulator.baseUrl} live emulator screen`}
+                  className="emulator-screen"
+                  height={224}
+                  src={`data:${emulator.screenshot.mediaType};base64,${emulator.screenshot.data}`}
+                  width={256}
+                />
+              ) : (
+                <div className="emulator-screen-placeholder">
+                  Lua script / bridge 대기
+                </div>
+              )}
+            </div>
+            <dl className="parallel-card-grid">
+              <MetaItem
+                label="프레임"
+                value={formatNullableNumber(emulator.frame)}
+              />
+              <MetaItem
+                label="타이틀"
+                value={emulator.gameTitle || "연결 안 됨"}
+              />
+              <MetaItem
+                label="코드"
+                value={emulator.gameCode || "알 수 없음"}
+              />
+              <MetaItem
+                label="상태"
+                value={
+                  emulator.reachable
+                    ? "조작 가능"
+                    : emulator.error || "bridge 대기"
+                }
+              />
+            </dl>
+          </article>
+        ))}
+      </div>
+      <p className="board-footnote">
+        실제 병렬 최적화는 각 카드가 별도 mGBA + Lua socket + mGBA-http 포트에
+        연결될 때 활성화됩니다.
+      </p>
+    </section>
+  );
+}
+
+function StrategyBookBoard({
+  error,
+  loadState,
+  strategyBook,
+}: {
+  error: string | undefined;
+  loadState: LoadState;
+  strategyBook: StrategyBook | undefined;
+}) {
+  const promotedCount =
+    strategyBook?.strategies.filter((strategy) => strategy.promoted).length ??
+    0;
+  return (
+    <section aria-label="자가개선 전략집" className="strategy-board">
+      <div className="panel-heading">
+        <p className="eyebrow">자가개선 전략집</p>
+        <h2>증거로 승격된 공략 패치</h2>
+      </div>
+      {loadState === "loading" ? <TraceLoading /> : null}
+      {error ? (
+        <Notice text={error} title="전략집 API 오프라인" tone="danger" />
+      ) : null}
+      {strategyBook?.error ? (
+        <Notice
+          text={strategyBook.error}
+          title="전략집 파싱 실패"
+          tone="danger"
+        />
+      ) : null}
+      <div className="strategy-summary">
+        <MetaItem label="승격 전략" value={formatNumber(promotedCount)} />
+        <MetaItem
+          label="전체 후보"
+          value={formatNumber(strategyBook?.strategies.length ?? 0)}
+        />
+        <MetaItem
+          label="임계값"
+          value={
+            strategyBook?.promotionThreshold === null ||
+            strategyBook?.promotionThreshold === undefined
+              ? "없음"
+              : formatNumber(strategyBook.promotionThreshold)
+          }
+        />
+        <MetaItem
+          label="갱신"
+          value={
+            strategyBook?.generatedAt
+              ? new Date(strategyBook.generatedAt).toLocaleTimeString()
+              : "대기"
+          }
+        />
+      </div>
+      <div className="strategy-list">
+        {(strategyBook?.strategies ?? []).slice(0, 4).map((strategy) => (
+          <article className="strategy-card" key={strategy.action}>
+            <header className="strategy-card-header">
+              <strong>{strategy.action}</strong>
+              <span
+                className={`strategy-status ${strategy.promoted ? "promoted" : "candidate"}`}
+              >
+                {strategy.promoted ? "promoted" : "candidate"}
+              </span>
+            </header>
+            <p>{strategy.recommendation}</p>
+            <dl className="parallel-card-grid">
+              <MetaItem
+                label="증거"
+                value={formatNumber(strategy.evidenceCount)}
+              />
+              <MetaItem
+                label="실행"
+                value={formatNumber(strategy.sourceRuns.length)}
+              />
+            </dl>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ParallelRunBoard({
+  details,
+  onSelectRun,
+  runs,
+  selectedRunId,
+}: {
+  details: ParallelDetailState;
+  onSelectRun: (runId: string) => void;
+  runs: ViewerRun[];
+  selectedRunId: string | undefined;
+}) {
+  return (
+    <section aria-label="병렬 실행 관측 보드" className="parallel-board">
+      <div className="panel-heading">
+        <p className="eyebrow">병렬 하네스 보드</p>
+        <h2>여러 시도 동시 관측</h2>
+      </div>
+      {runs.length === 0 ? (
+        <Notice
+          text="실행 기록이 생기면 최신 6개 run을 같은 보드에서 폴링합니다."
+          title="병렬 카드 대기 중"
+          tone="muted"
+        />
+      ) : (
+        <div className="parallel-grid">
+          {runs.map((run) => (
+            <ParallelRunCard
+              detail={details[run.runId]}
+              key={run.runId}
+              onSelectRun={onSelectRun}
+              run={run}
+              selected={run.runId === selectedRunId}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ParallelRunCard({
+  detail,
+  onSelectRun,
+  run,
+  selected,
+}: {
+  detail: DetailState | undefined;
+  onSelectRun: (runId: string) => void;
+  run: ViewerRun;
+  selected: boolean;
+}) {
+  const observation = latestObservation(detail?.events ?? []);
+  const action = latestAction(detail?.events ?? []);
+  const totalTokenUsage =
+    detail?.tokens.length === 0
+      ? run.totalTokens
+      : sumTurnSummaries(detail?.tokens ?? []);
+  return (
+    <button
+      className={`parallel-card ${selected ? "selected" : ""}`}
+      onClick={() => onSelectRun(run.runId)}
+      type="button"
+    >
+      <span className="run-card-topline">
+        <span>{run.experimentId ?? formatIteration(run.iteration)}</span>
+        <span>{formatRunMode(run.mode)}</span>
+      </span>
+      <strong>{run.runId}</strong>
+      <dl className="parallel-card-grid">
+        <MetaItem
+          label="맵/위치"
+          value={
+            observation?.pokemonState
+              ? `map=${formatNullableNumber(observation.pokemonState.mapId)} x=${formatNullableNumber(observation.pokemonState.position.x)} y=${formatNullableNumber(observation.pokemonState.position.y)}`
+              : "관측 없음"
+          }
+        />
+        <MetaItem
+          label="프레임"
+          value={
+            observation
+              ? formatNullableNumber(observation.status.frame)
+              : "알 수 없음"
+          }
+        />
+        <MetaItem
+          label="최근 액션"
+          value={action?.toolName ?? action?.text ?? "없음"}
+        />
+        <MetaItem
+          label="토큰"
+          value={
+            totalTokenUsage
+              ? formatNumber(totalTokenUsage.totalTokens)
+              : "요약 없음"
+          }
+        />
+        <MetaItem
+          label="막힘"
+          value={`${formatNumber(run.stuckEvents ?? 0)}회`}
+        />
+        <MetaItem
+          label="상태"
+          value={detail?.error ?? formatParallelLoadState(detail?.loadState)}
+        />
+      </dl>
+    </button>
+  );
+}
+
+function latestObservation(
+  events: ViewerEvent[]
+): ObservationViewerEvent | undefined {
+  return [...events]
+    .reverse()
+    .find(
+      (event): event is ObservationViewerEvent => event.type === "observation"
+    );
+}
+
+function latestAction(events: ViewerEvent[]): ViewerEventSummary | undefined {
+  return [...events]
+    .reverse()
+    .find(
+      (event): event is AgentViewerEvent =>
+        event.type === "agent-event" &&
+        event.summary?.kind === "action_tool_call"
+    )?.summary;
 }
 
 function MetaItem({ label, value }: { label: string; value: string }) {
@@ -1015,6 +1494,22 @@ function formatRunMode(value: string | undefined): string {
       return "탐색";
     case undefined:
       return "알 수 없음";
+    default:
+      return value;
+  }
+}
+
+function formatParallelLoadState(value: LoadState | undefined): string {
+  switch (value) {
+    case "error":
+      return "오류";
+    case "loading":
+      return "로딩";
+    case "ready":
+      return "폴링 중";
+    case "idle":
+    case undefined:
+      return "대기";
     default:
       return value;
   }

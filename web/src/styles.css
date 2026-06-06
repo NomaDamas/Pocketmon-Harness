@@ -86,6 +86,9 @@ pre {
 
 .hero-panel,
 .metadata-panel,
+.emulator-board,
+.strategy-board,
+.parallel-board,
 .live-controls,
 .run-rail,
 .turn-panel,
@@ -105,6 +108,40 @@ pre {
   margin-bottom: 18px;
   background:
     linear-gradient(135deg, rgba(140, 255, 113, 0.12), transparent 42%),
+    var(--bg-panel);
+}
+
+.parallel-board {
+  padding: 20px;
+  margin-bottom: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 200, 87, 0.1), transparent 38%),
+    var(--bg-panel);
+}
+
+.emulator-board {
+  padding: 20px;
+  margin-bottom: 18px;
+  background:
+    radial-gradient(
+      circle at 18% 0%,
+      rgba(140, 255, 113, 0.14),
+      transparent 36rem
+    ),
+    linear-gradient(135deg, rgba(140, 255, 113, 0.08), transparent 42%),
+    var(--bg-panel);
+}
+
+.strategy-board {
+  padding: 20px;
+  margin-bottom: 18px;
+  background:
+    radial-gradient(
+      circle at 82% 0%,
+      rgba(255, 200, 87, 0.13),
+      transparent 34rem
+    ),
+    linear-gradient(135deg, rgba(255, 200, 87, 0.08), transparent 42%),
     var(--bg-panel);
 }
 
@@ -207,11 +244,144 @@ h3 {
 }
 
 .run-list,
+.emulator-grid,
+.strategy-list,
+.parallel-grid,
 .turn-stack,
 .decision-panel,
 .skeleton-stack {
   display: grid;
   gap: 14px;
+}
+
+.parallel-grid {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+.strategy-list {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+.emulator-grid {
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+}
+
+.emulator-card {
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(140, 255, 113, 0.07), transparent),
+    var(--control-bg);
+  border: 1px solid rgba(196, 255, 166, 0.14);
+}
+
+.strategy-card {
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 200, 87, 0.08), transparent),
+    var(--control-bg);
+  border: 1px solid rgba(255, 200, 87, 0.18);
+}
+
+.strategy-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.strategy-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.strategy-card p {
+  min-height: 74px;
+  margin: 0 0 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.strategy-status {
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--bg);
+  text-transform: uppercase;
+  background: var(--amber);
+}
+
+.strategy-status.promoted {
+  background: var(--green);
+}
+
+.emulator-card.online {
+  border-color: rgba(140, 255, 113, 0.42);
+}
+
+.emulator-card.offline {
+  border-color: rgba(255, 107, 74, 0.35);
+  opacity: 0.82;
+}
+
+.emulator-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.emulator-card-header h3 {
+  max-width: 230px;
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
+}
+
+.emulator-status {
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--bg);
+  text-transform: uppercase;
+  background: var(--green);
+}
+
+.emulator-card.offline .emulator-status {
+  background: var(--red);
+}
+
+.emulator-screen-frame {
+  display: grid;
+  place-items: center;
+  min-height: 206px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  background: #050704;
+  border: 1px solid rgba(196, 255, 166, 0.16);
+}
+
+.emulator-screen {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.emulator-screen-placeholder {
+  padding: 20px;
+  color: var(--muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.board-footnote {
+  margin: 14px 0 0;
+  line-height: 1.6;
+  color: var(--muted);
 }
 
 .run-card {
@@ -226,6 +396,44 @@ h3 {
     border-color 160ms ease,
     transform 160ms ease,
     background 160ms ease;
+}
+
+.parallel-card {
+  width: 100%;
+  padding: 16px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  background:
+    linear-gradient(180deg, rgba(140, 255, 113, 0.07), transparent),
+    var(--control-bg);
+  border: 1px solid rgba(196, 255, 166, 0.14);
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.parallel-card:hover,
+.parallel-card.selected {
+  background:
+    linear-gradient(180deg, rgba(255, 200, 87, 0.11), transparent),
+    var(--control-bg-active);
+  border-color: var(--amber);
+  transform: translateY(-2px);
+}
+
+.parallel-card strong {
+  display: block;
+  margin: 8px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.parallel-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(90px, 1fr));
+  gap: 10px;
+  margin: 0;
 }
 
 .run-card:hover,
@@ -576,6 +784,8 @@ pre {
 
 @media (max-width: 1120px) {
   .workspace-grid,
+  .emulator-grid,
+  .parallel-grid,
   .metadata-panel,
   .turn-grid {
     grid-template-columns: 1fr;

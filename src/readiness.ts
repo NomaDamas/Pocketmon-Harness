@@ -84,10 +84,13 @@ function modelConfigReadiness(env: NodeJS.ProcessEnv): ReadinessItem {
   const hasApiKey = Boolean(env.AI_API_KEY);
   const hasBaseUrl = Boolean(env.AI_BASE_URL);
   const model = env.AI_MODEL || (provider === "grok" ? "grok-4.3" : "gpt-5.5");
+  const microModel =
+    env.AI_MICRO_MODEL ||
+    (provider === "grok" ? "grok-3-mini-fast" : "gpt-5.3-codex-spark");
 
   if (hasApiKey && hasBaseUrl) {
     return {
-      detail: `${provider}/${model}; API key and base URL are set locally`,
+      detail: `${provider}/${model}; micro=${microModel}; API key and base URL are set locally`,
       label: "Model config",
       status: "ready",
     };

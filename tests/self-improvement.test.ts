@@ -82,6 +82,51 @@ describe("trace self-improvement", () => {
     });
   });
 
+  it("writes a candidate when diverse actions stay on the same RAM state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pss-improve-"));
+    const traceRoot = join(root, "traces");
+    const outputRoot = join(root, "improvements");
+    const runId = "run-no-progress";
+    const runDir = join(traceRoot, "runs", runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "events.jsonl"),
+      ["A", "B", "Down", "Right"]
+        .flatMap((button) => [
+          JSON.stringify({
+            summary: {
+              input: { button },
+              kind: "action_tool_call",
+              toolName: button.length === 1 ? "mgba_tap" : "mgba_hold",
+            },
+            type: "agent-event",
+          }),
+          JSON.stringify({
+            pokemonState: {
+              mapId: 38,
+              position: { x: 3, y: 6 },
+            },
+            type: "observation",
+          }),
+        ])
+        .join("\n")
+    );
+
+    const result = await improveLatestTrace({
+      outputRoot,
+      traceRoot,
+    });
+
+    expect(result.status).toBe("candidate-written");
+    expect(result.candidate).toMatchObject({
+      patch: {
+        action: "avoid-no-progress-state",
+        minimumFailures: 3,
+      },
+      status: "candidate",
+    });
+  });
+
   it("suppresses repeated A candidates when dialogue is progressing", async () => {
     const root = await mkdtemp(join(tmpdir(), "pss-improve-"));
     const traceRoot = join(root, "traces");

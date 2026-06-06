@@ -1,3 +1,4 @@
+import { chooseNameEntryRecoveryAction } from "./name-entry-recovery";
 import type { PokemonStateObservation } from "./pokemon-state";
 import { STAGE1_VIRIDIAN_ACTIVE_RULES } from "./stage1-active-rules";
 import { STAGE1_VIRIDIAN_ACTIVE_SKILLS } from "./stage1-active-skills";
@@ -5,6 +6,7 @@ import {
   evaluateStage1ViridianCitySuccess,
   POKEMON_RED_STAGE1_MAP_IDS,
 } from "./stage1-evaluator";
+import { planStage1Path } from "./stage1-pathfinder";
 import type { StuckMemorySnapshot } from "./stuck-memory";
 
 export interface Stage1RuntimePlanInput {
@@ -29,6 +31,8 @@ export function formatStage1RuntimePlan({
   const mode = detectMode(state);
   const activeRules = selectRuntimeRules(state, stuckMemory);
   const selectedSkill = selectRuntimeSkill(state, stuckMemory);
+  const pathPlan = planStage1Path({ state, stuckMemory });
+  const recoveryAction = chooseNameEntryRecoveryAction(state, recentActions);
   const victory = evaluateStage1ViridianCitySuccess({
     currentState: state,
   });
@@ -39,9 +43,10 @@ export function formatStage1RuntimePlan({
     `- mode: ${mode}`,
     `- mapId: ${formatValue(state.mapId)} position: x=${formatValue(state.position.x)} y=${formatValue(state.position.y)}`,
     `- evaluator: victory=${victory.progressStatus === "victory"} progress=${victory.progressStatus}`,
+    `- pathfinder: ${formatPathPlan(pathPlan)}`,
     `- active rules: ${activeRules.map((rule) => rule.id).join(", ") || "none"}`,
-    `- recommended skill: ${selectedSkill?.id ?? "fallback:vision-guided-supervised-control"}`,
-    `- recommended action: ${formatRecommendedAction(selectedSkill)}`,
+    `- recommended skill: ${recoveryAction ? "skill:name-entry.confirm-default-or-end" : (selectedSkill?.id ?? "fallback:vision-guided-supervised-control")}`,
+    `- recommended action: ${formatRecommendedAction(selectedSkill, pathPlan, recoveryAction)}`,
     `- recent action diversity guard: ${recentActions.length >= 3 ? "avoid same-state/same-action repetition at 3+ attempts" : "collect evidence before declaring a loop"}`,
     "- control boundary: only mgba_tap/mgba_tap_many/mgba_hold/mgba_hold_many/mgba_release; never reset, reload, or delete saves",
   ].join("\n");
@@ -118,13 +123,39 @@ function selectRuntimeSkill(
 }
 
 function formatRecommendedAction(
-  skill: (typeof STAGE1_VIRIDIAN_ACTIVE_SKILLS)[number] | undefined
+  skill: (typeof STAGE1_VIRIDIAN_ACTIVE_SKILLS)[number] | undefined,
+  pathPlan: ReturnType<typeof planStage1Path> | undefined,
+  recoveryAction: ReturnType<typeof chooseNameEntryRecoveryAction>
 ): string {
+  if (recoveryAction) {
+    return `${recoveryAction.toolName} ${recoveryAction.button}; ${recoveryAction.reason}`;
+  }
+  const isRecoverySkill =
+    skill?.id === "skill:route-1.lateral-obstacle-recovery";
+  if (pathPlan && (!isRecoverySkill || pathPlan.backtrackingActive)) {
+    return `mgba_hold ${pathPlan.action} for 16 frames from Dijkstra/backtracking pathfinder`;
+  }
   const candidate = skill?.output.actionCandidates[0];
   if (!candidate) {
     return "observe -> choose one safe supervised action";
   }
   return `${candidate.toolCall.toolName} ${(candidate.toolCall.buttons ?? []).join("+")} for ${candidate.toolCall.durationFrames ?? "default"} frames`;
+}
+
+function formatPathPlan(
+  plan: ReturnType<typeof planStage1Path> | undefined
+): string {
+  if (!plan) {
+    return "unavailable for current mode/state";
+  }
+  const waypoint = plan.nextWaypoint
+    ? ` next=${plan.nextWaypoint.kind}@map=${plan.nextWaypoint.position.mapId},x=${plan.nextWaypoint.position.x},y=${plan.nextWaypoint.position.y}`
+    : "";
+  const blocked =
+    plan.blockedActions.length > 0
+      ? ` blocked=${plan.blockedActions.join(",")}`
+      : " blocked=none";
+  return `${plan.method} action=${plan.action} backtracking=${plan.backtrackingActive}${blocked} path=${plan.path.join(" -> ")}${waypoint}; ${plan.reason}`;
 }
 
 function formatValue(value: number | null): string {
