@@ -31,6 +31,7 @@ Copy `.env.example` to `.env` and configure the local emulator and model:
 
 ```bash
 MGBA_HTTP_BASE_URL=http://127.0.0.1:5000
+POKEMON_ROM_PATH=
 AI_PROVIDER=openai-compatible
 AI_BASE_URL=
 AI_API_KEY=
@@ -54,14 +55,37 @@ URLs and keys are intentionally not committed. For Grok model experiments, keep
 Start mGBA and `mGBA-http` separately, then run the harness:
 
 ```bash
-mgba --script .local-tools/mgba-http/mGBASocketServer.lua /absolute/path/to/legal/rom.gb
+mkdir -p .pss-mgba/saves
+/Applications/mGBA.app/Contents/MacOS/mGBA \
+  -C savegamePath=/Users/jinminseong/Desktop/pocketmon-harness/.pss-mgba/saves \
+  /absolute/path/to/legal/rom.gb
 .local-tools/mgba-http/mGBA-http
 pnpm dev
 ```
 
+If your mGBA build does not support a CLI `--script` flag, open
+`Tools > Scripting...` inside mGBA and run:
+
+```lua
+dofile("/Users/jinminseong/Desktop/pocketmon-harness/.local-tools/mgba-http/mGBASocketServer.lua")
+```
+
+The writable `savegamePath` avoids mGBA's `Failed to open save file` warning
+when the ROM is outside a writable experiment directory.
+
 The harness expects one live emulator server. Do not start a second mGBA or
 `mGBA-http` process for a live experiment; the current emulator state is the
 state being measured.
+
+Check all live prerequisites before a run:
+
+```bash
+pnpm readiness
+```
+
+This probes local model config, ROM path, mGBA HTTP reachability, trace
+observer state, dashboard availability, self-improvement status, Ralph status,
+and parallel-run configuration without printing secrets.
 
 ## Runtime Loop
 
@@ -172,6 +196,30 @@ without touching mGBA or the model process. See
 `pokemon-red-macro-progress-observer.seed.yaml` for the macro progress model and
 `docs/ouroboros-ralph-readiness.md` for the Ouroboros/Ralph completion and gap
 audit.
+
+## Self-Improvement And Parallel Runs
+
+Generate a QA-gated improvement candidate from the latest trace:
+
+```bash
+pnpm improve:trace
+```
+
+The command reads `events.jsonl`, runs the Stage 1 repeated-action evaluator,
+and writes `.pss-mgba/improvements/<run-id>.candidate.json` only when evidence
+shows repeated action failure at or above the configured threshold. It does not
+silently promote candidates into active rules.
+
+Run multiple live harness instances when multiple mGBA HTTP servers are already
+running:
+
+```bash
+POKEMON_PARALLEL_MGBA_PORTS=5001,5002 pnpm parallel:run
+```
+
+Each instance receives a separate `MGBA_HTTP_BASE_URL` and experiment label.
+This is real process orchestration, not replay simulation; every listed port
+must point to a running mGBA + `mGBA-http` pair.
 
 ## Grafana
 
