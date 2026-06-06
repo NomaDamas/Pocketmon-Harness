@@ -7,9 +7,8 @@ export interface NameEntryRecoveryAction {
   toolName: "mgba_tap";
 }
 
-const NAME_ENTRY_MAP_ID = 38;
-const NAME_ENTRY_POSITION = { x: 3, y: 6 } as const;
-const CONFIRM_OR_START_PATTERN = /\b(Start|A)\b/;
+const NAME_ENTRY_MAP_ID = 158;
+const NAME_ENTRY_CONFIRM_RIGHT_ATTEMPTS = 5;
 
 export function isLikelyNameEntryState(
   state: PokemonStateObservation | undefined
@@ -17,8 +16,6 @@ export function isLikelyNameEntryState(
   return (
     state?.readStatus === "available" &&
     state.mapId === NAME_ENTRY_MAP_ID &&
-    state.position.x === NAME_ENTRY_POSITION.x &&
-    state.position.y === NAME_ENTRY_POSITION.y &&
     state.battle === false
   );
 }
@@ -31,15 +28,14 @@ export function chooseNameEntryRecoveryAction(
     return;
   }
 
-  const recent = recentActions.join(" ");
   const rightCount = countRecentButton(recentActions, "Right");
   const downCount = countRecentButton(recentActions, "Down");
 
-  if (CONFIRM_OR_START_PATTERN.test(recent) && rightCount >= 3) {
+  if (rightCount >= NAME_ENTRY_CONFIRM_RIGHT_ATTEMPTS) {
     return {
       button: "A",
       reason:
-        "Name-entry recovery: enough rightward cursor movement has been attempted; confirm the likely END/menu item.",
+        "Name-entry recovery: enough rightward cursor movement has been attempted; confirm the likely END/menu item instead of looping.",
       toolName: "mgba_tap",
     };
   }

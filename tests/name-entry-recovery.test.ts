@@ -8,7 +8,7 @@ const nameEntryState: PokemonStateObservation = {
   battleType: null,
   dialogueLike: "visual-fallback",
   direction: "down",
-  mapId: 38,
+  mapId: 158,
   menuLike: "visual-fallback",
   position: { x: 3, y: 6 },
   readStatus: "available",
@@ -42,7 +42,8 @@ describe("name entry recovery", () => {
         'tap: {"button":"Right"}',
         'tap: {"button":"Right"}',
         'tap: {"button":"Right"}',
-        'tap: {"button":"Start"}',
+        'tap: {"button":"Right"}',
+        'tap: {"button":"Right"}',
       ])
     ).toMatchObject({
       button: "A",
