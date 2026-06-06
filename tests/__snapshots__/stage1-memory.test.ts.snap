@@ -1,0 +1,70 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`stage1 memory primitives > creates deterministic exports and rejects duplicate record IDs 1`] = `
+"{
+  "exportedAt": "2026-06-06T00:01:00.000Z",
+  "records": [
+    {
+      "content": {
+        "summary": "Walk north from Pallet Town toward Route 1."
+      },
+      "game": "pokemon-red",
+      "id": "rule:route-1.walk-north",
+      "kind": "rule",
+      "metadata": {
+        "confidence": 0.8,
+        "createdAt": "2026-06-06T00:00:00.000Z",
+        "frameWindow": {
+          "endFrame": 640,
+          "fps": 60,
+          "startFrame": 0
+        },
+        "source": {
+          "kind": "base-guide",
+          "label": "Pokemon Red Stage 1 base guide"
+        },
+        "tags": [
+          "viridian"
+        ]
+      },
+      "schemaVersion": "pokemon-red-stage1-memory/v1",
+      "scope": "route-guide",
+      "stage": "stage1",
+      "status": "active",
+      "version": "1.0.0"
+    },
+    {
+      "content": {
+        "summary": "Walk north from Pallet Town toward Route 1."
+      },
+      "game": "pokemon-red",
+      "id": "skill:route-1.follow-path",
+      "kind": "skill",
+      "metadata": {
+        "confidence": 0.8,
+        "createdAt": "2026-06-06T00:00:00.000Z",
+        "frameWindow": {
+          "endFrame": 640,
+          "fps": 60,
+          "startFrame": 0
+        },
+        "source": {
+          "kind": "base-guide",
+          "label": "Pokemon Red Stage 1 base guide"
+        },
+        "tags": [
+          "viridian"
+        ]
+      },
+      "schemaVersion": "pokemon-red-stage1-memory/v1",
+      "scope": "skill",
+      "stage": "stage1",
+      "status": "active",
+      "version": "1.0.0"
+    }
+  ],
+  "schemaVersion": "pokemon-red-stage1-memory/v1",
+  "type": "stage1-memory-export"
+}
+"
+`;

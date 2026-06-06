@@ -7,7 +7,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit && pnpm web:typecheck",
     "test": "vitest run --passWithNoTests",
+    "test:ci": "vitest run --passWithNoTests --fileParallelism=false",
     "dev": "tsx src/index.ts",
+    "tui": "tsx src/tui.ts",
     "viewer": "tsx src/viewer-server-main.ts",
     "web:dev": "vite --config web/vite.config.ts",
     "web:build": "vite build --config web/vite.config.ts",

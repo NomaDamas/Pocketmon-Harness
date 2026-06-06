@@ -1,6 +1,6 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Agent, type SessionHandle } from "@minpeter/pss-runtime";
-import { env } from "./env";
+import { env, getAiRuntimeConfig } from "./env";
 import { startMetricsServer } from "./metrics-server";
 import { MgbaHttpClient } from "./mgba-http";
 import {
@@ -27,9 +27,10 @@ import { createTrackedModel, TokenUsageTracker } from "./token-usage";
 import { createMgbaControlPlane, describeMgbaControlPlane } from "./tools";
 import { createViewerEventRecorder } from "./viewer-recorder";
 
+const aiRuntimeConfig = getAiRuntimeConfig();
 const provider = createOpenAICompatible({
-  apiKey: env.AI_API_KEY,
-  baseURL: env.AI_BASE_URL,
+  apiKey: aiRuntimeConfig.apiKey,
+  baseURL: aiRuntimeConfig.baseURL,
   name: "pokemon",
 });
 
@@ -93,7 +94,7 @@ const agent = await Agent.create({
         signal,
       });
       const observation = await captureMgbaObservation(mgbaClient, signal);
-      observationBookkeeping.promoteObservation(observation, turnsRun);
+      await recordStepObservation(observation);
       await session.steer(
         createObservedInput({
           observation,
@@ -118,7 +119,7 @@ const agent = await Agent.create({
   },
   instructions,
   model: createTrackedModel({
-    model: provider(env.AI_MODEL),
+    model: provider(aiRuntimeConfig.model),
     tracker: tokenUsageTracker,
   }),
   toolChoice: "required",
@@ -153,13 +154,24 @@ while (true) {
 async function recordTurnObservation(
   observation: MgbaObservation
 ): Promise<void> {
-  observationBookkeeping.promoteObservation(observation, turnsRun);
   prettyLogger.observationInjection({
     nextTurn: turnsRun,
     observation,
   });
-  await viewerEventRecorder.recordObservation(turnsRun, observation);
+  await recordObservationProgress(observation);
+}
 
+async function recordStepObservation(
+  observation: MgbaObservation
+): Promise<void> {
+  await recordObservationProgress(observation);
+}
+
+async function recordObservationProgress(
+  observation: MgbaObservation
+): Promise<void> {
+  observationBookkeeping.promoteObservation(observation, turnsRun);
+  await viewerEventRecorder.recordObservation(turnsRun, observation);
   const milestone = milestoneTracker.observe(observation);
   if (milestone.furthest && milestone.furthest !== runTrace.milestoneFurthest) {
     runTrace = await updateRunTraceMetadata(runTrace, {

@@ -1,0 +1,22 @@
+completed_acs:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+evidence:
+  guardrail:
+    typecheck: pass
+    test: "pass: 25 files / 173 tests"
+    build: pass
+    check: pass
+  notes:
+    - "Stage 1 foundation implemented manually after the initial local Ouroboros run over-decomposed and was closed as stale."
+    - "Ralph MCP tooling is not exposed in the current Codex/Ouroboros runtime surface."

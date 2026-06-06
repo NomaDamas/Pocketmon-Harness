@@ -1,0 +1,5 @@
+lint = "pnpm check"
+build = "pnpm build"
+test = "pnpm test:ci"
+static = "pnpm typecheck"
+timeout = 300

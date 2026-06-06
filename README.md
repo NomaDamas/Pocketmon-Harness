@@ -31,12 +31,25 @@ Copy `.env.example` to `.env` and configure the local emulator and model:
 
 ```bash
 MGBA_HTTP_BASE_URL=http://127.0.0.1:5000
-AI_BASE_URL=https://codex.nekos.me/v1
+AI_PROVIDER=openai-compatible
+AI_BASE_URL=
 AI_API_KEY=
-AI_MODEL=gpt-5.5
+AI_MODEL=
 METRICS_HTTP_HOST=0.0.0.0
 METRICS_HTTP_PORT=9464
 ```
+
+`AI_PROVIDER` supports model preset switching without code changes:
+
+- `openai-compatible`: defaults `AI_MODEL` to `gpt-5.5`
+- `grok`: defaults `AI_MODEL` to `grok-4.3`
+
+Always set `AI_BASE_URL` and `AI_API_KEY` in local `.env`; provider endpoint
+URLs and keys are intentionally not committed. For Grok model experiments, keep
+`AI_PROVIDER=grok` and switch `AI_MODEL` between compatible model ids such as
+`grok-4.3`, `grok-4.20-0309-reasoning`,
+`grok-4.20-0309-non-reasoning`, `grok-4.20-multi-agent-0309`,
+`grok-3-mini`, or `grok-3-mini-fast`.
 
 Start mGBA and `mGBA-http` separately, then run the harness:
 
@@ -137,6 +150,28 @@ for Vite. Vite proxies `/api` requests to the viewer server. Older runs without
 `events.jsonl` still show metadata and token metrics, but they do not have
 screenshots or an action timeline. No deployment or API keys are required, and
 the server is local-only by default.
+
+## Terminal Observer
+
+Use the read-only terminal dashboard while a run is active:
+
+```bash
+pnpm tui
+```
+
+For a single snapshot:
+
+```bash
+pnpm tui -- --once
+```
+
+The TUI reads the latest trace under `.pss-mgba/traces/runs/` and shows macro
+progress phase, health, confidence, gaps, run id, milestone, model, action
+count, supervisor interventions, token usage, and the latest action/reasoning
+without touching mGBA or the model process. See
+`pokemon-red-macro-progress-observer.seed.yaml` for the macro progress model and
+`docs/ouroboros-ralph-readiness.md` for the Ouroboros/Ralph completion and gap
+audit.
 
 ## Grafana
 

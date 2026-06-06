@@ -1,0 +1,74 @@
+goal: "Add macro-level progress observability to the Pokemon Red autonomous harness so humans and Ralph can judge whether a run is advancing toward Stage 1 victory or drifting into loops."
+
+task_type: "code"
+
+brownfield_context:
+  project_type: "brownfield"
+  context_references:
+    - path: "/Users/jinminseong/Desktop/pocketmon-harness"
+      role: "primary"
+      summary: "TypeScript Pokemon Red mGBA harness with trace files, token usage, run metadata, Stage 1 rule/skill/evaluator foundation, and read-only TUI observer."
+  existing_patterns:
+    - "Runtime writes run metadata to .pss-mgba/traces/runs/<run-id>/run.json."
+    - "Runtime writes viewer events to events.jsonl and token metrics to token-usage.jsonl."
+    - "The TUI must remain read-only and must not call mGBA control endpoints."
+
+constraints:
+  - "Macro progress must be derived from evidence already in traces or run metadata."
+  - "Do not block the live runner while rendering macro progress."
+  - "Keep macro progress frame-native and milestone-based; do not use wall-clock ETA as a success proxy."
+  - "Expose gaps explicitly instead of hiding uncertainty behind a single percentage."
+  - "Support both human monitoring and Ralph/evaluator usage."
+
+macro_progress_model:
+  phases:
+    - id: "runtime-ready"
+      label: "Runtime ready"
+      evidence: ["run.json exists"]
+    - id: "model-loop-active"
+      label: "Model loop active"
+      evidence: ["token-usage.jsonl has at least one llm-step", "model id is known"]
+    - id: "observation-grounded"
+      label: "Observation grounded"
+      evidence: ["events.jsonl has observation events or frame evidence"]
+    - id: "first-battle-detected"
+      label: "First battle detected"
+      evidence: ["run milestone >= first-battle-detected"]
+    - id: "first-battle-completed"
+      label: "First battle completed"
+      evidence: ["run milestone >= first-battle-completed"]
+    - id: "route-navigation-active"
+      label: "Route navigation active"
+      evidence: ["movement actions are being executed after early battle/dialogue"]
+    - id: "viridian-reached"
+      label: "Viridian reached"
+      evidence: ["Stage 1 success milestone or Viridian map evidence"]
+  health:
+    healthy: "Signals are present and no macro gaps are detected."
+    watch: "Progress exists but one or two gaps require human/Ralph attention."
+    blocked: "Three or more macro gaps or repeated high-risk signals indicate likely drift."
+  gap_examples:
+    - "Sparse observation persistence despite many actions."
+    - "Supervisor interventions high relative to actions."
+    - "Token budget growing before Stage 1 victory."
+    - "Next macro phase has not been reached."
+
+acceptance_criteria:
+  - "TUI displays macro phase, phase progress, health, confidence, signals, and gaps."
+  - "Macro progress is computed by a testable trace summary module."
+  - "Macro progress remains read-only and does not control mGBA."
+  - "Seed documents the macro progress phase model for Ralph/evolve follow-up."
+  - "Full guardrail passes: pnpm typecheck, pnpm test, pnpm build, pnpm check."
+
+ralph_usage:
+  lineage_id: "ralph-pokemon-red-macro-progress-20260606"
+  project_dir: "/Users/jinminseong/Desktop/pocketmon-harness"
+  execute: true
+  parallel: true
+  skip_qa: false
+  max_generations: 10
+
+metadata:
+  seed_id: "pokemon_red_macro_progress_observer"
+  version: "1.0.0"
+  created_for: "Ralph-ready macro observability follow-up"

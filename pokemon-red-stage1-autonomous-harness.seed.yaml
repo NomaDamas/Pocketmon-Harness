@@ -1,0 +1,100 @@
+goal: "Extend the existing TypeScript Pokemon Red mGBA harness with a Stage 1 autonomous rule/skill/evaluator foundation whose first gameplay victory condition is reaching Viridian City from early-game state."
+
+task_type: "code"
+
+brownfield_context:
+  project_type: "brownfield"
+  context_references:
+    - path: "/Users/jinminseong/Desktop/pocketmon-harness"
+      role: "primary"
+      summary: "TypeScript Node 22 harness using @minpeter/pss-runtime, mGBA-http, screenshot/RAM observation, supervisor-normalized button tools, traces, metrics, and tests."
+  existing_patterns:
+    - "src/index.ts owns the observe -> model -> tool -> trace loop."
+    - "src/observation.ts creates multimodal model input from mGBA status, screenshot, Pokemon Red RAM, recent actions, and stuck memory."
+    - "src/stuck-memory.ts tracks failed movement edges and currently raises stuckEvents at 8 repeated stationary movement attempts."
+    - "src/supervisor.ts normalizes control timing and waits for settle/black frames after actions."
+  existing_dependencies:
+    - "Node.js >= 20, Node 22 preferred locally"
+    - "pnpm 11.2.2"
+    - "TypeScript 6"
+    - "Vitest"
+    - "@minpeter/pss-runtime"
+
+constraints:
+  - "Keep the project focused on Pokemon Red; do not generalize to other ROMs in Stage 1."
+  - "Do not expose reset, ROM loading, save deletion, or restart tools to the model."
+  - "Preserve the existing supervised mGBA button control boundary."
+  - "Use frame-native timing and record fps only as metadata."
+  - "Use token usage only as a diagnostic metric; do not reject improvements solely because token usage increases."
+  - "Human intervention must be optional: the autonomous loop continues by default, but human override artifacts may promote, reject, disable, or annotate candidates."
+  - "Base guide knowledge must be separated from learned/candidate guide patches."
+  - "Stage 1 must run without requiring live multi-port mGBA orchestration; multi-port live execution can be represented by interfaces or follow-up TODOs."
+  - "All changes must pass pnpm typecheck, pnpm test, pnpm build, and pnpm check under Node 22 PATH."
+
+acceptance_criteria:
+  - "Add a machine-readable memory structure for Pokemon Red rules, skills, world/route knowledge, quests, learned candidates, and optional human overrides, with Stage 1 active knowledge scoped to reaching Viridian City."
+  - "Implement or scaffold a goal-scoped Rule Memory Read path that returns only the rules relevant to current mode, map, battle state, and objective instead of injecting the entire guide."
+  - "Implement or scaffold a Hybrid planner/executor path where normal decisions flow through Rule -> Skill -> Action, and LLM direct action is treated as fallback for unknown or ambiguous situations."
+  - "Add Stage 1 evaluators for progress-first scoring: map transition progress, Viridian City success, loop score, stuck score, tool error score, and repeated-action score."
+  - "Add a loop/improvement gate that detects repeated same-state/same-action behavior at or after 3 attempts using score-based evidence while preserving the existing 8-attempt StuckMemory behavior."
+  - "Add frame-native evaluation window policy with defaults: 640-frame eval window, 10 no-progress windows stop threshold, 3 repeated-loop trigger, and 5-run promotion evidence threshold."
+  - "Add evidence artifacts for episodes, eval windows, loop events, patch candidates, QA verdicts, and methodology graph state without breaking existing trace outputs."
+  - "Add a candidate-only self-improvement workflow: failures create rule/skill/methodology patch candidates, a reviewer/evaluator gate scores them, and active guide updates only happen after QA/evidence gates."
+  - "Represent both best-of-batch and evidence-threshold promotion strategies so parallel methodology graph pruning can compare them."
+  - "Add replay optimizer support or an explicit replay-ready interface that can rescore existing traces without requiring live mGBA."
+  - "Add tests covering rule filtering, skill selection, loop detection at 3 attempts, frame-window scoring, patch candidate gating, human override handling, and replay scoring behavior."
+  - "Document the Stage 1 architecture and operating model in a concise developer-facing document or README section."
+
+ontology_schema:
+  name: "PokemonRedAutonomousHarness"
+  description: "Conceptual model for a Pokemon Red self-improving autonomous gameplay harness built on the existing mGBA TypeScript harness."
+  fields:
+    - name: "Observation"
+      type: "object"
+      description: "Current screenshot, mGBA status, Pokemon Red RAM fields, frame metadata, and recent action context."
+    - name: "RuleMemory"
+      type: "object"
+      description: "Machine-readable Pokemon Red rules grouped by control, mode, navigation, story, battle, resource, and route guide scopes."
+    - name: "Skill"
+      type: "object"
+      description: "Reusable gameplay capability that maps current state and rules to safe action candidates."
+    - name: "Evaluator"
+      type: "object"
+      description: "Progress-first scoring layer for success, loop, stuck, tool-error, and repeated-action evidence."
+    - name: "PatchCandidate"
+      type: "object"
+      description: "Candidate rule, skill, or methodology change generated from evidence and gated before activation."
+    - name: "MethodologyGraph"
+      type: "object"
+      description: "Graph of competing strategies, outcomes, pruning decisions, and optional human overrides."
+
+evaluation_principles:
+  - name: "progress_first"
+    description: "Viridian City progress and reduced loop/stuck behavior matter more than token efficiency."
+    weight: 1.0
+  - name: "safety_boundary"
+    description: "The model must remain limited to safe button-control actions and must not gain reset/reload authority."
+    weight: 1.0
+  - name: "evidence_driven_improvement"
+    description: "Self-improvement decisions must be tied to trace evidence, evaluator output, and QA verdicts."
+    weight: 0.95
+  - name: "brownfield_fit"
+    description: "Changes should extend the existing observation, supervisor, trace, and test patterns rather than replacing them wholesale."
+    weight: 0.9
+  - name: "testability"
+    description: "Core rule, skill, evaluator, and patch-gate behavior must be unit or integration testable without live mGBA."
+    weight: 0.9
+
+exit_conditions:
+  - name: "stage1_foundation_complete"
+    description: "The Stage 1 rule/skill/evaluator foundation is implemented or scaffolded with tests and documentation."
+    criteria: "All acceptance criteria are satisfied and the full repository guardrail passes."
+  - name: "blocked_by_runtime"
+    description: "Execution cannot continue because required external runtime, model, or mGBA-specific capability is unavailable."
+    criteria: "The blocker is documented with exact missing dependency and no local mock/replay alternative can validate the acceptance criteria."
+
+metadata:
+  seed_id: "pokemon_red_stage1_autonomous_harness"
+  version: "1.0.0"
+  ambiguity_score: 0.12
+  interview_id: "codex-fallback-interview-2026-06-06"

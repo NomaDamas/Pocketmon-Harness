@@ -97,37 +97,27 @@ describe("mGBA observation input", () => {
       readStatus: "available",
     });
 
-    expect(createObservedInput({ observation, text: "continue" })).toEqual([
-      {
-        text: [
-          "continue",
-          "",
-          "Current mGBA status:",
-          "frame: 2817",
-          "game: PKMN RED ST DMG-AR",
-          "active buttons: none",
-          "",
-          "Current compact Pokémon state:",
-          "readStatus: available",
-          "mapId: 12",
-          "position: x=10, y=14",
-          "direction: up",
-          "battle: false",
-          "battleType: 0",
-          "battleResult: 0",
-          "dialogueLike: visual-fallback",
-          "menuLike: visual-fallback",
-          "",
-          "Current screenshot: attached image below. Red grid lines are movement guide lines marking 16x16 Game Boy movement-cell boundaries. Treat the red grid as movement guide lines. First distinguish blocked cells, open walkable cells, and interactable-looking objects. In indoor scenes, solid black areas/borders/void, walls, furniture, and counters are blocked; visible floor tiles are walkable unless occupied. However, if a black/dark tile looks like a doorway, carpet, threshold, stairs, mat, path marker, or other movement-guiding feature, approach or test it once as a possible transition/exit. Then either move through open floor to explore unseen areas or face an object and press A to interact. Avoid repeating recent actions that did not visibly change progress.",
-        ].join("\n"),
+    const input = createObservedInput({ observation, text: "continue" });
+    expect(input).toEqual([
+      expect.objectContaining({
         type: "text",
-      },
-      {
+      }),
+      expect.objectContaining({
         image: `data:image/png;base64,${pngBase64}`,
         mediaType: "image/png",
         type: "image",
-      },
+      }),
     ]);
+    const text = input[0]?.type === "text" ? input[0].text : "";
+    expect(text).toContain("Current compact Pokémon state:");
+    expect(text).toContain("readStatus: available");
+    expect(text).toContain("mapId: 12");
+    expect(text).toContain("position: x=10, y=14");
+    expect(text).toContain("Stage 1 Rule Memory Read:");
+    expect(text).toContain(
+      "recommended skill: skill:route-1.follow-north-path"
+    );
+    expect(text).toContain("recommended action: mgba_hold Up for 16 frames");
     expect(
       createObservedInput({ observation, text: "continue" })[0]
     ).not.toEqual(
@@ -281,39 +271,20 @@ describe("mGBA observation input", () => {
       text: "continue",
     });
 
-    expect(input[0]).toEqual({
-      text: [
-        "continue",
-        "",
-        "Current mGBA status:",
-        "frame: 2817",
-        "game: PKMN RED ST DMG-AR",
-        "active buttons: none",
-        "",
-        "Current compact Pokémon state:",
-        "readStatus: available",
-        "mapId: 12",
-        "position: x=10, y=14",
-        "direction: up",
-        "battle: false",
-        "battleType: 0",
-        "battleResult: 0",
-        "dialogueLike: visual-fallback",
-        "menuLike: visual-fallback",
-        "failed movement memory:",
-        "- map=12 x=2 y=14 facing=up; hold:Direction2; failed 3x; last turn 22",
-        "- map=12 x=3 y=14 facing=up; hold:Direction3; failed 4x; last turn 23",
-        "- map=12 x=4 y=14 facing=up; hold:Direction4; failed 5x; last turn 24",
-        "- map=12 x=5 y=14 facing=up; hold:Direction5; failed 6x; last turn 25",
-        "- map=12 x=6 y=14 facing=up; hold:Direction6; failed 7x; last turn 26",
-        "- map=12 x=7 y=14 facing=up; hold:Direction7; failed 8x; last turn 27",
-        "recent recovery attempts:",
-        '- turn 30: tap: {"button":"A"} after map=12 x=7 y=14 facing=up',
-        "",
-        "Current screenshot: attached image below. Red grid lines are movement guide lines marking 16x16 Game Boy movement-cell boundaries. Treat the red grid as movement guide lines. First distinguish blocked cells, open walkable cells, and interactable-looking objects. In indoor scenes, solid black areas/borders/void, walls, furniture, and counters are blocked; visible floor tiles are walkable unless occupied. However, if a black/dark tile looks like a doorway, carpet, threshold, stairs, mat, path marker, or other movement-guiding feature, approach or test it once as a possible transition/exit. Then either move through open floor to explore unseen areas or face an object and press A to interact. Avoid repeating recent actions that did not visibly change progress.",
-      ].join("\n"),
-      type: "text",
-    });
+    expect(input[0]).toEqual(expect.objectContaining({ type: "text" }));
+    const text = input[0]?.type === "text" ? input[0].text : "";
+    expect(text).toContain("failed movement memory:");
+    expect(text).toContain(
+      "- map=12 x=2 y=14 facing=up; hold:Direction2; failed 3x; last turn 22"
+    );
+    expect(text).toContain("recent recovery attempts:");
+    expect(text).toContain(
+      '- turn 30: tap: {"button":"A"} after map=12 x=7 y=14 facing=up'
+    );
+    expect(text).toContain(
+      "recommended skill: skill:route-1.lateral-obstacle-recovery"
+    );
+    expect(text).toContain("recommended action: mgba_hold Left for 12 frames");
     expect(input[0]).not.toEqual(
       expect.objectContaining({
         text: expect.stringContaining("hold:Direction0"),

@@ -7,6 +7,7 @@ import {
 } from "./pokemon-state";
 import { readOptimizedGameBoyScreenshotBase64 } from "./screenshot-image";
 import { createScreenshotPath } from "./screenshot-path";
+import { formatStage1RuntimePlan } from "./stage1-runtime-plan";
 import { formatStuckMemory, type StuckMemorySnapshot } from "./stuck-memory";
 
 export type ObservedAgentInput = readonly UserMessageContentPart[];
@@ -81,7 +82,7 @@ function createObservedText({
   stuckMemory,
   text,
 }: Parameters<typeof createObservedInput>[0]): string {
-  return `${text}\n\nCurrent mGBA status:\n${formatStatus(observation.status)}${formatState(observation.state)}${formatRecentActions(recentActions)}${formatStuckMemory(stuckMemory)}\n\nCurrent screenshot: attached image below. Red grid lines are movement guide lines marking 16x16 Game Boy movement-cell boundaries. Treat the red grid as movement guide lines. First distinguish blocked cells, open walkable cells, and interactable-looking objects. In indoor scenes, solid black areas/borders/void, walls, furniture, and counters are blocked; visible floor tiles are walkable unless occupied. However, if a black/dark tile looks like a doorway, carpet, threshold, stairs, mat, path marker, or other movement-guiding feature, approach or test it once as a possible transition/exit. Then either move through open floor to explore unseen areas or face an object and press A to interact. Avoid repeating recent actions that did not visibly change progress.`;
+  return `${text}\n\nCurrent mGBA status:\n${formatStatus(observation.status)}${formatState(observation.state)}${formatRecentActions(recentActions)}${formatStuckMemory(stuckMemory)}${formatStage1RuntimePlan({ recentActions, state: observation.state, stuckMemory })}\n\nCurrent screenshot: attached image below. Red grid lines are movement guide lines marking 16x16 Game Boy movement-cell boundaries. Treat the red grid as movement guide lines. First follow the Stage 1 Rule Memory Read recommendation when it has a recommended skill/action. If the runtime plan is unavailable or ambiguous, distinguish blocked cells, open walkable cells, and interactable-looking objects. In indoor scenes, solid black areas/borders/void, walls, furniture, and counters are blocked; visible floor tiles are walkable unless occupied. However, if a black/dark tile looks like a doorway, carpet, threshold, stairs, mat, path marker, or other movement-guiding feature, approach or test it once as a possible transition/exit. Then either move through open floor to explore unseen areas or face an object and press A to interact. Avoid repeating recent actions that did not visibly change progress.`;
 }
 
 export function formatStatus(status: MgbaStatus): string {
