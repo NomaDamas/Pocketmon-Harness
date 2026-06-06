@@ -49,27 +49,16 @@ class FakeRun implements AgentRun {
 }
 
 describe("POKEMON_OBJECTIVE_PROMPT", () => {
-  it("hardcodes the autonomous Pokémon objective", () => {
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("already-loaded Pokémon game");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("without resetting");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("beat the game");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("Do not spam A");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("blocked terrain");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("open walkable space");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("solid black areas");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("out-of-room void");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("doorway, carpet, threshold");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("possible transition/exit");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("interactable-looking objects");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("Track recent action context");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("duration 12");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("taps duration 6");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("Unsafe long movement chains");
+  it("defines the LLM as a fallback analyst rather than the main player", () => {
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("fallback analyst");
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("not the main Pokémon player");
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("The harness owns route memory");
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("one recovery hypothesis only");
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("do not spam A");
     expect(POKEMON_OBJECTIVE_PROMPT).toContain(
-      "<action_plan>...</action_plan>"
+      "Do not take over long-term routing"
     );
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("medium-term goal");
-    expect(POKEMON_OBJECTIVE_PROMPT).toContain("Do not stop");
+    expect(POKEMON_OBJECTIVE_PROMPT).toContain("Do not reset");
   });
 });
 
@@ -395,19 +384,15 @@ describe("createTurnPrompt", () => {
 });
 
 describe("createContinuationPrompt", () => {
-  it("keeps the hardcoded objective and removes stop conditions", () => {
+  it("keeps the fallback analyst contract for continuation turns", () => {
     const prompt = createContinuationPrompt(7);
 
-    expect(prompt).toContain("Turn 7 ended");
-    expect(prompt).toContain("Hardcoded objective:");
+    expect(prompt).toContain("Fallback turn 7 ended");
+    expect(prompt).toContain("Fallback contract:");
     expect(prompt).toContain(POKEMON_OBJECTIVE_PROMPT);
-    expect(prompt).toContain("Never reset/reload/restart");
-    expect(prompt).toContain("Avoid repeating A-only input");
-    expect(prompt).toContain("recent action context");
-    expect(prompt).toContain("Before calling any tool");
+    expect(prompt).toContain("recovery analyst");
+    expect(prompt).toContain("Before any tool call");
     expect(prompt).toContain("<action_plan>...</action_plan>");
-    expect(prompt).toContain("There is no CLI prompt");
-    expect(prompt).toContain("or stop condition");
   });
 });
 

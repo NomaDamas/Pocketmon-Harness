@@ -208,6 +208,9 @@ function routeIndexForPosition(position: PlannerPosition): number {
   if (position.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity) {
     return NODE_ROUTE.indexOf(GOAL_NODE_ID);
   }
+  if (position.mapId === POKEMON_RED_STAGE1_MAP_IDS.palletTown) {
+    return 1;
+  }
   if (position.mapId === POKEMON_RED_STAGE1_MAP_IDS.route1) {
     if (position.y <= 0) {
       return 5;

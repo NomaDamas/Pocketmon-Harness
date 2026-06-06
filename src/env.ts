@@ -51,9 +51,35 @@ export function resolveAiRuntimeConfig({
   };
 }
 
+export function resolveOptionalAiRuntimeConfig({
+  apiKey,
+  baseURL,
+  microModel,
+  model,
+  provider,
+}: {
+  apiKey?: string;
+  baseURL?: string;
+  model?: string;
+  microModel?: string;
+  provider?: AiProviderPreset;
+}): ReturnType<typeof resolveAiRuntimeConfig> | undefined {
+  if (!(baseURL || apiKey || model || microModel || provider)) {
+    return;
+  }
+  return resolveAiRuntimeConfig({
+    apiKey,
+    baseURL,
+    microModel,
+    model,
+    provider: provider ?? "openai-compatible",
+  });
+}
+
 export const env = createEnv({
   server: {
     MGBA_HTTP_BASE_URL: z.url().default("http://127.0.0.1:5000"),
+    MGBA_HTTP_AUTH_TOKEN: z.string().optional(),
     AI_PROVIDER: z
       .enum(["openai-compatible", "grok"])
       .default("openai-compatible"),
@@ -61,6 +87,15 @@ export const env = createEnv({
     AI_API_KEY: z.string().optional(),
     AI_MODEL: z.string().min(1).optional(),
     AI_MICRO_MODEL: z.string().min(1).optional(),
+    AI_FALLBACK_PROVIDER: z.enum(["openai-compatible", "grok"]).optional(),
+    AI_FALLBACK_BASE_URL: z.url().optional(),
+    AI_FALLBACK_API_KEY: z.string().optional(),
+    AI_FALLBACK_MODEL: z.string().min(1).optional(),
+    AI_FALLBACK_MICRO_MODEL: z.string().min(1).optional(),
+    HARNESS_MAX_STEPS: z.coerce.number().int().positive().optional(),
+    HARNESS_MAX_TOKENS: z.coerce.number().int().positive().optional(),
+    HARNESS_MAX_TURNS: z.coerce.number().int().positive().optional(),
+    HARNESS_MAX_MINUTES: z.coerce.number().positive().optional(),
     METRICS_HTTP_HOST: z.string().min(1).default("0.0.0.0"),
     METRICS_HTTP_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   },
@@ -84,4 +119,15 @@ export function getMicroAiRuntimeConfig() {
     ...config,
     model: config.microModel,
   };
+}
+
+export function getFallbackMicroAiRuntimeConfig() {
+  const config = resolveOptionalAiRuntimeConfig({
+    apiKey: env.AI_FALLBACK_API_KEY,
+    baseURL: env.AI_FALLBACK_BASE_URL,
+    microModel: env.AI_FALLBACK_MICRO_MODEL,
+    model: env.AI_FALLBACK_MODEL,
+    provider: env.AI_FALLBACK_PROVIDER,
+  });
+  return config ? { ...config, model: config.microModel } : undefined;
 }

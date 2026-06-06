@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+
 export const MGBA_BUTTONS = [
   "A",
   "B",
@@ -15,6 +17,7 @@ export type MgbaButton = (typeof MGBA_BUTTONS)[number];
 export type MgbaHttpMethod = "GET" | "POST";
 
 const MGBA_TRANSIENT_RETRY_ATTEMPTS = 2;
+type HttpHeaders = Record<string, string>;
 
 export interface MgbaRequestOptions {
   method?: MgbaHttpMethod;
@@ -26,6 +29,7 @@ export interface MgbaRequestOptions {
 }
 
 export interface MgbaClientOptions {
+  authToken?: string;
   baseUrl: string;
   fetch?: typeof fetch;
 }
@@ -56,10 +60,17 @@ export class MgbaHttpError extends Error {
 }
 
 export class MgbaHttpClient {
+  readonly #authToken?: string;
   readonly #baseUrl: URL;
   readonly #fetch: typeof fetch;
+  readonly #missingEndpointPaths = new Set<string>();
 
-  constructor({ baseUrl, fetch: fetchImpl = fetch }: MgbaClientOptions) {
+  constructor({
+    authToken,
+    baseUrl,
+    fetch: fetchImpl = fetch,
+  }: MgbaClientOptions) {
+    this.#authToken = authToken;
     this.#baseUrl = new URL(baseUrl);
     this.#fetch = fetchImpl;
   }
@@ -68,7 +79,7 @@ export class MgbaHttpClient {
     path: string,
     { method = "GET", params = {}, signal }: MgbaRequestOptions = {}
   ): Promise<string> {
-    const url = new URL(path, this.#baseUrl);
+    const url = this.#url(path);
 
     for (const [key, value] of Object.entries(params)) {
       const values = Array.isArray(value) ? value : [value];
@@ -83,7 +94,11 @@ export class MgbaHttpClient {
       attempt += 1
     ) {
       try {
-        const response = await this.#fetch(url, { method, signal });
+        const response = await this.#fetch(url, {
+          headers: this.#headers(),
+          method,
+          signal,
+        });
         const body = await response.text();
 
         if (!response.ok) {
@@ -98,7 +113,7 @@ export class MgbaHttpClient {
           throw error;
         }
 
-        return body.trim();
+        return unwrapMgbaResponse(body).trim();
       } catch (error) {
         if (
           attempt >= MGBA_TRANSIENT_RETRY_ATTEMPTS ||
@@ -129,6 +144,13 @@ export class MgbaHttpClient {
       method: "POST",
       params: { buttons },
       signal,
+    }).catch((error: unknown) => {
+      if (!isMissingEndpointError(error)) {
+        throw error;
+      }
+      return this.runSequentialButtons(buttons, (button) =>
+        this.tap(button, signal)
+      );
     });
   }
 
@@ -153,6 +175,13 @@ export class MgbaHttpClient {
       method: "POST",
       params: { buttons, duration },
       signal,
+    }).catch((error: unknown) => {
+      if (!isMissingEndpointError(error)) {
+        throw error;
+      }
+      return this.runSequentialButtons(buttons, (button) =>
+        this.hold(button, duration, signal)
+      );
     });
   }
 
@@ -184,20 +213,31 @@ export class MgbaHttpClient {
   }
 
   getAllButtons(signal?: AbortSignal): Promise<MgbaButton[]> {
-    return this.request("/mgba-http/button/getall", { signal }).then((body) =>
-      body
-        .split(",")
-        .map((button) => button.trim())
-        .filter(isMgbaButton)
-    );
+    if (this.#missingEndpointPaths.has("/mgba-http/button/getall")) {
+      return Promise.resolve([]);
+    }
+    return this.request("/mgba-http/button/getall", { signal })
+      .then((body) =>
+        body
+          .split(",")
+          .map((button) => button.trim())
+          .filter(isMgbaButton)
+      )
+      .catch((error: unknown) => {
+        if (isMissingEndpointError(error)) {
+          this.#missingEndpointPaths.add("/mgba-http/button/getall");
+          return [];
+        }
+        throw error;
+      });
   }
 
   async status(signal?: AbortSignal): Promise<MgbaStatus> {
     const [activeButtons, frameText, gameCode, gameTitle] = await Promise.all([
       this.getAllButtons(signal),
       this.request("/core/currentframe", { signal }),
-      this.request("/core/getgamecode", { signal }),
-      this.request("/core/getgametitle", { signal }),
+      this.optionalRequest("/core/getgamecode", "POKEMON", signal),
+      this.optionalRequest("/core/getgametitle", "POKEMON RED", signal),
     ]);
 
     const frame = Number.parseInt(frameText, 10);
@@ -219,7 +259,7 @@ export class MgbaHttpClient {
   }
 
   reset(signal?: AbortSignal): Promise<string> {
-    return this.request("/coreadapter/reset", { method: "POST", signal });
+    return this.request("/core/reset", { method: "POST", signal });
   }
 
   read8(address: number, signal?: AbortSignal): Promise<number> {
@@ -238,11 +278,99 @@ export class MgbaHttpClient {
   }
 
   screenshot(path: string, signal?: AbortSignal): Promise<string> {
-    return this.request("/core/screenshot", {
+    return this.requestBinaryOrText("/core/screenshot", path, {
       method: "POST",
       params: { path },
       signal,
     });
+  }
+
+  async optionalRequest(
+    path: string,
+    fallback: string,
+    signal?: AbortSignal
+  ): Promise<string> {
+    try {
+      return await this.request(path, { signal });
+    } catch (error) {
+      if (isMissingEndpointError(error)) {
+        return fallback;
+      }
+      throw error;
+    }
+  }
+
+  async requestBinaryOrText(
+    path: string,
+    targetPath: string,
+    { method = "GET", params = {}, signal }: MgbaRequestOptions = {}
+  ): Promise<string> {
+    const url = this.#url(path);
+    for (const [key, value] of Object.entries(params)) {
+      const values = Array.isArray(value) ? value : [value];
+      for (const item of values) {
+        url.searchParams.append(key, String(item));
+      }
+    }
+
+    for (
+      let attempt = 1;
+      attempt <= MGBA_TRANSIENT_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      const response = await this.#fetch(url, {
+        headers: this.#headers(),
+        method,
+        signal,
+      });
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok) {
+        const error = new MgbaHttpError(response, await response.text());
+        if (
+          attempt < MGBA_TRANSIENT_RETRY_ATTEMPTS &&
+          isRetryableMgbaRequest(path, method) &&
+          isTransientMgbaError(error)
+        ) {
+          continue;
+        }
+        throw error;
+      }
+      if (contentType.includes("image/png")) {
+        await writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
+        return "ok";
+      }
+      return unwrapMgbaResponse(await response.text()).trim();
+    }
+
+    throw new Error("mGBA screenshot retry loop exhausted unexpectedly");
+  }
+
+  #headers(): HttpHeaders | undefined {
+    if (!this.#authToken) {
+      return;
+    }
+    return {
+      Authorization: `Bearer ${this.#authToken}`,
+      "X-Principal-Token": this.#authToken,
+    };
+  }
+
+  #url(path: string): URL {
+    const base = new URL(this.#baseUrl);
+    if (!base.pathname.endsWith("/")) {
+      base.pathname = `${base.pathname}/`;
+    }
+    return new URL(path.replace(/^\/+/u, ""), base);
+  }
+
+  async runSequentialButtons(
+    buttons: readonly MgbaButton[],
+    runButton: (button: MgbaButton) => Promise<string>
+  ): Promise<string> {
+    for (const button of buttons) {
+      await runButton(button);
+    }
+    return "ok";
   }
 }
 
@@ -279,4 +407,24 @@ function readStringProperty(error: unknown, key: string): string | undefined {
 
 function isMgbaButton(value: string): value is MgbaButton {
   return MGBA_BUTTONS.includes(value as MgbaButton);
+}
+
+function isMissingEndpointError(error: unknown): boolean {
+  return error instanceof MgbaHttpError && error.status === 404;
+}
+
+function unwrapMgbaResponse(body: string): string {
+  const trimmed = body.trim();
+  if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    return trimmed;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { response?: unknown };
+    if (typeof parsed.response === "string") {
+      return parsed.response.replace(/<\|SUCCESS\|>$/u, "");
+    }
+  } catch {
+    return trimmed;
+  }
+  return trimmed;
 }

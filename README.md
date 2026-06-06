@@ -380,23 +380,38 @@ pnpm tui
 - Trace files: `.pss-mgba/traces/runs/<run-id>/events.jsonl`
 
 Run multiple live harness instances when multiple mGBA HTTP servers are already
-running:
+running. For classic `mGBA-http`, use independent ports:
 
 ```bash
 POKEMON_PARALLEL_MGBA_PORTS=5001,5002 pnpm parallel:run
 ```
 
-Each instance receives a separate `MGBA_HTTP_BASE_URL` and experiment label.
-This is real process orchestration, not replay simulation; every listed port
-must point to a running mGBA + `mGBA-http` pair.
+For `mgba-server` session URLs, keep the generated session principals in a
+local env file and do not print them:
 
-⚠️ Current parallel boundary:
+```bash
+set -a
+. .pss-mgba/mgba-server/parallel-endpoints.env
+set +a
+AI_PROVIDER=grok HARNESS_MAX_STEPS=50 pnpm parallel:run
+pnpm improve:parallel -- --batch <batch-id>
+```
 
-- One live mGBA + `mGBA-http` pair is currently running on this machine.
-- `parallel:run` can orchestrate multiple harness processes only after separate
-  emulator/Lua socket pairs are available on separate ports.
-- Until then, the maximum safe parallelism is one live Grok gameplay run plus
-  concurrent viewer, TUI, trace evaluator, and self-improvement watcher.
+Each instance receives a separate `MGBA_HTTP_BASE_URL`, optional
+`MGBA_HTTP_AUTH_TOKEN`, `PARALLEL_BATCH_ID`, metrics port, and hypothesis label.
+This is real process orchestration, not replay simulation; every listed port or
+session URL must point to an independent emulator/session.
+
+⚠️ Current parallel evidence boundary:
+
+- `parallel:run` is an evidence generator: it creates live traces for multiple
+  hypotheses.
+- `improve:parallel` scores a batch and writes proposals under
+  `.pss-mgba/candidates/<batch-id>/`.
+- `improve:promote` is intentionally explicit and QA-gated; active
+  rules/skills/pathfinder files are not silently self-mutated.
+- A proposal can be blocked even after successful runs when evidence is too weak
+  to promote, for example no map transition or progress milestone.
 
 ## ✅ Methodology Coverage
 
@@ -412,7 +427,8 @@ must point to a running mGBA + `mGBA-http` pair.
 | ⚡ Fast micro actions | `AI_MICRO_MODEL` separates fast controller model from stronger macro model. |
 | 🤖 Grok gameplay mode | `AI_PROVIDER=grok` switches defaults to `grok-4.3` / `grok-3-mini-fast`. |
 | 📊 Observer dashboard | Web viewer, TUI, Prometheus, and optional Grafana show trace, macro progress, and health. |
-| 🧵 Parallel hypotheses | `parallel:run` can launch multiple harness processes when each has its own mGBA HTTP port. |
+| 🧵 Parallel hypotheses | `parallel:run` launches multiple harness processes against independent mGBA HTTP ports or authenticated `mgba-server` session URLs. |
+| 🌳 Evidence hierarchy proposal | `improve:parallel` turns parallel traces into QA-gated rule/skill/pathfinder proposals under `.pss-mgba/candidates/<batch-id>/`. |
 | 🧑 Human intervention | The model cannot reset/reload ROM; humans can reset or stop/restart processes externally. |
 | 🐍 Ouroboros/Ralph process | Formal local evaluate/Ralph artifacts are documented in `docs/`; live Ralph MCP is gated on missing MCP tools. |
 
@@ -420,8 +436,9 @@ must point to a running mGBA + `mGBA-http` pair.
 
 These are intentionally documented so the README does not overclaim:
 
-- 🕹️ True multi-emulator parallel gameplay requires multiple independent
-  mGBA + Lua socket + `mGBA-http` pairs, each on its own port.
+- 🕹️ True parallel gameplay requires multiple independent emulator endpoints:
+  either separate mGBA + Lua socket + `mGBA-http` pairs or independent
+  `mgba-server` worker sessions.
 - 🧪 Candidate patches are not automatically promoted into active rules; this is
   a safety boundary until QA gates are stronger.
 - 🗺️ The implemented route knowledge is Stage 1 only, not a full Pokemon Red

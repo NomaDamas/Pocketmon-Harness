@@ -47,6 +47,21 @@ describe("createRunTrace", () => {
     });
   });
 
+  it("allocates unique iterations under concurrent parallel starts", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "pss-mgba-trace-parallel-"));
+    chdir(tempDir);
+
+    const traces = await Promise.all(
+      Array.from({ length: 5 }, (_value, index) =>
+        createRunTrace(new Date(2026, 4, 24, 0, 0, index))
+      )
+    );
+
+    expect(traces.map((trace) => trace.iteration).sort((a, b) => a - b)).toEqual(
+      [1, 2, 3, 4, 5]
+    );
+  });
+
   it("serializes each valid experiment mode and all experiment metadata fields", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "pss-mgba-trace-modes-"));
     chdir(tempDir);

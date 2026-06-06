@@ -7,6 +7,8 @@ export const DIRECTIONAL_HOLD_DURATION = 12;
 export const NON_DIRECTIONAL_TAP_DURATION = 6;
 export const POST_ACTION_SETTLE_FRAMES = 200;
 export const BLACK_FRAME_MAX_POLLS = 5;
+export const SETTLE_MAX_POLLS = 240;
+export const SETTLE_POLL_INTERVAL_MS = 16;
 
 const DIRECTION_BUTTONS = new Set<MgbaButton>(["Up", "Down", "Left", "Right"]);
 const BUTTON_SET = new Set<MgbaButton>(MGBA_BUTTONS);
@@ -308,8 +310,11 @@ class MgbaSupervisor {
     }
     const targetFrame = startFrame + POST_ACTION_SETTLE_FRAMES;
     let polls = 0;
-    while (true) {
+    while (polls < SETTLE_MAX_POLLS) {
       polls += 1;
+      if (polls > 1) {
+        await sleep(SETTLE_POLL_INTERVAL_MS);
+      }
       const frame = (await this.#client.status(signal)).frame;
       if (frame !== null && frame >= targetFrame) {
         if (polls > 1) {
@@ -325,9 +330,20 @@ class MgbaSupervisor {
         return;
       }
     }
+    this.#intervene({
+      detail: `settle polling stopped after ${SETTLE_MAX_POLLS} polls without reaching target frame ${targetFrame}`,
+      polls,
+      reason: "settle-wait",
+      startFrame,
+      targetFrame,
+    });
   }
 }
 
 function isDirection(button: MgbaButton): boolean {
   return DIRECTION_BUTTONS.has(button);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

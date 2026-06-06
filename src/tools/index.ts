@@ -16,7 +16,10 @@ export interface MgbaControlPlaneOptions {
 }
 
 export function createMgbaControlPlane({
-  client = new MgbaHttpClient({ baseUrl: env.MGBA_HTTP_BASE_URL }),
+  client = new MgbaHttpClient({
+    authToken: env.MGBA_HTTP_AUTH_TOKEN,
+    baseUrl: env.MGBA_HTTP_BASE_URL,
+  }),
   onSupervisorIntervention,
 }: MgbaControlPlaneOptions = {}): AgentTools {
   return createMgbaTools({

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { AI_PROVIDER_PRESETS, resolveAiRuntimeConfig } from "../src/env";
+import {
+  AI_PROVIDER_PRESETS,
+  resolveAiRuntimeConfig,
+  resolveOptionalAiRuntimeConfig,
+} from "../src/env";
 
 describe("resolveAiRuntimeConfig", () => {
   it("uses the openai-compatible preset by default", () => {
@@ -51,6 +55,29 @@ describe("resolveAiRuntimeConfig", () => {
       microModel: "fast-model",
       model: "custom-model",
       provider: "grok",
+    });
+  });
+});
+
+describe("resolveOptionalAiRuntimeConfig", () => {
+  it("returns undefined when fallback config is not provided", () => {
+    expect(resolveOptionalAiRuntimeConfig({})).toBeUndefined();
+  });
+
+  it("resolves fallback config without exposing local secrets", () => {
+    expect(
+      resolveOptionalAiRuntimeConfig({
+        apiKey: "fallback-key",
+        baseURL: "https://fallback.example.test/v1",
+        microModel: "fallback-fast",
+        model: "fallback-strong",
+      })
+    ).toEqual({
+      apiKey: "fallback-key",
+      baseURL: "https://fallback.example.test/v1",
+      microModel: "fallback-fast",
+      model: "fallback-strong",
+      provider: "openai-compatible",
     });
   });
 });

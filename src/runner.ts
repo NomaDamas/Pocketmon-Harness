@@ -17,20 +17,15 @@ import {
 export type RunnerEvent = AgentEvent | SupervisorInterventionEvent;
 
 export const POKEMON_OBJECTIVE_PROMPT = [
-  "Continue playing the already-loaded Pokémon game autonomously from the current emulator state.",
-  "Your long-term objective is to beat the game from the current emulator state without resetting, reloading, or restarting progress.",
-  "The runner injects the latest screenshot/status as input at the start of each turn.",
-  "Injected screenshots include red movement guide lines marking 16x16 movement cells; use those guide lines for navigation decisions.",
-  "For each screenshot, classify visible cells into blocked terrain, open walkable space, and interactable-looking objects such as NPCs, signs, doors, PCs, counters, stairs, items, or unusual sprites.",
-  "In indoor scenes, treat solid black areas, black borders, walls, furniture, counters, and out-of-room void as blocked/non-walkable. Do not plan movement into plain black space; use visible floor tiles as walkable space unless occupied by an object or wall. Exception: if a black/dark tile is shaped like a doorway, carpet, threshold, stairs, mat, path marker, or other movement-guiding feature, it may be worth approaching or testing once as a possible transition/exit.",
-  "Choose actions by either moving through open walkable space to explore areas not yet visible, or approaching an interactable-looking object and pressing A when facing it.",
-  "Button-use guide: use A/B/Start/Select taps for interaction/menu/dialogue. For movement, use a single directional hold per turn. A local supervisor enforces deterministic control timing: directional single-tile movement duration 12, non-directional taps duration 6, and post-action settle waits before the next observation. Unsafe long movement chains are shortened locally, so choose one safe tile/interaction at a time.",
-  "Track recent action context and avoid repeating the same failed movement or interaction plan; if an action did not visibly change progress, choose a different direction, target, or interaction hypothesis next.",
-  "Before any tool call each turn, output an <action_plan>...</action_plan> block. In that block, briefly state the medium-term goal, blocked/open/object classification, intended target, next action, and which recent failed action pattern to avoid.",
-  "Every turn, decide the next useful game action from that observation, output the action_plan block, execute exactly one control action, then stop with a brief progress note.",
-  "Do not spam A through repeated turns. If A stops changing the game state, try directional movement, B, Start, or another hypothesis.",
+  "You are a fallback analyst, not the main Pokémon player.",
+  "The harness owns route memory, phase/waypoint state, deterministic execution, and verification.",
+  "You are called only when RAM/pathfinder/controller cannot classify the state or verification repeatedly failed.",
+  "Use the injected RAM state, screenshot, failed action memory, and controller fallback reason to propose one recovery hypothesis only.",
+  "Execute exactly one constrained recovery control action, then stop. Do not take over long-term routing.",
+  "Prefer actions that resolve unknown UI state: advance confirmed dialogue, cancel unexpected menu, or test one safe movement/object interaction.",
+  "Never reset, reload, restart, erase progress, or intentionally diverge from the controller objective.",
+  "If recent A presses did not change state, do not spam A; choose B, a directional reorientation, or a single alternative hypothesis.",
   "Do not reset, reload the ROM, restart, or erase progress under any circumstance.",
-  "Do not stop, do not wait for user input, and do not declare completion as a stop condition.",
 ].join("\n");
 
 export function createTurnPrompt(turn: number): string {
@@ -41,16 +36,10 @@ export function createTurnPrompt(turn: number): string {
 
 export function createContinuationPrompt(turn: number): string {
   return [
-    `Turn ${turn} ended. Immediately continue the hardcoded Pokémon objective.`,
-    "Hardcoded objective:",
+    `Fallback turn ${turn} ended. Continue only as recovery analyst.`,
+    "Fallback contract:",
     POKEMON_OBJECTIVE_PROMPT,
-    "The latest screenshot/status is injected at turn start. Use that injected observation to choose the next control action.",
-    "Before calling any tool, output exactly one <action_plan>...</action_plan> block with the medium-term goal, visible blocked/open/object assessment, intended target, next action, and recent repetition to avoid.",
-    "Choose exactly one safe game action that preserves progress, execute it, then summarize progress briefly and stop this turn.",
-    "Never reset/reload/restart the game state; continue from the current state only.",
-    "Avoid repeating A-only input across turns unless the screenshot clearly shows advancing dialogue; if blocked, choose a non-A control before trying A again.",
-    "Use the recent action context below to avoid retrying the same movement or object interaction when it did not visibly change progress.",
-    "There is no CLI prompt, completion marker, or stop condition. Continue indefinitely.",
+    "Before any tool call, output exactly one <action_plan>...</action_plan> block with controller gap, visible evidence, one recovery hypothesis, next action, and repetition to avoid.",
   ].join("\n");
 }
 

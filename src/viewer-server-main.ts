@@ -6,7 +6,9 @@ const DEFAULT_VIEWER_RUNS_DIR = ".pss-mgba/traces/runs";
 const DEFAULT_VIEWER_STATIC_DIR = "web/dist";
 
 startViewerServer({
+  emulatorAuthTokens: parseList(process.env.VIEWER_EMULATOR_AUTH_TOKENS),
   emulatorPorts: parsePorts(process.env.VIEWER_EMULATOR_PORTS),
+  emulatorUrls: parseList(process.env.VIEWER_EMULATOR_URLS),
   host: process.env.VIEWER_HTTP_HOST ?? DEFAULT_VIEWER_HOST,
   port: Number.parseInt(
     process.env.VIEWER_HTTP_PORT ?? String(DEFAULT_VIEWER_PORT),
@@ -21,4 +23,11 @@ function parsePorts(value: string | undefined): number[] {
     .split(",")
     .map((port) => Number.parseInt(port.trim(), 10))
     .filter((port) => Number.isInteger(port) && port > 0);
+}
+
+function parseList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

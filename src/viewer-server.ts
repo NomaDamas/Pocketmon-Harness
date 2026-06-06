@@ -10,6 +10,8 @@ import { EVENTS_JSONL_FILENAME, type ViewerEvent } from "./viewer-events";
 
 export interface ViewerServerOptions {
   emulatorPorts?: readonly number[];
+  emulatorUrls?: readonly string[];
+  emulatorAuthTokens?: readonly string[];
   host: string;
   port: number;
   runsDir?: string;
@@ -42,6 +44,8 @@ interface JsonError {
   error: string;
 }
 
+type HttpHeaders = Record<string, string>;
+
 const DEFAULT_STRATEGY_BOOK_PATH = ".pss-mgba/strategy-book.json";
 const EVENTS_ROUTE_PATTERN = /^\/api\/runs\/([^/]+)\/events$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -49,7 +53,9 @@ const TOKEN_USAGE_JSONL_FILENAME = "token-usage.jsonl";
 const TOKENS_ROUTE_PATTERN = /^\/api\/runs\/([^/]+)\/tokens$/;
 
 export function startViewerServer({
+  emulatorAuthTokens,
   emulatorPorts = [5000, 5001, 5002],
+  emulatorUrls,
   host,
   port,
   runsDir = DEFAULT_RUNS_DIR,
@@ -58,7 +64,9 @@ export function startViewerServer({
 }: ViewerServerOptions): Server {
   const server = createServer((request, response) => {
     handleRequest(request.url ?? "/", response, {
+      emulatorAuthTokens,
       emulatorPorts,
+      emulatorUrls,
       runsDir,
       strategyBookPath,
       staticDir,
@@ -100,7 +108,12 @@ async function handleRequest(
   response: ServerResponse,
   options: Pick<
     ViewerServerOptions,
-    "emulatorPorts" | "runsDir" | "staticDir" | "strategyBookPath"
+    | "emulatorAuthTokens"
+    | "emulatorPorts"
+    | "emulatorUrls"
+    | "runsDir"
+    | "staticDir"
+    | "strategyBookPath"
   >
 ): Promise<void> {
   const url = new URL(rawUrl, "http://127.0.0.1");
@@ -124,7 +137,11 @@ async function handleRequest(
     writeJson(
       response,
       200,
-      await readEmulatorSlots(options.emulatorPorts ?? [5000, 5001, 5002])
+      await readConfiguredEmulatorSlots({
+        authTokens: options.emulatorAuthTokens,
+        ports: options.emulatorPorts ?? [5000, 5001, 5002],
+        urls: options.emulatorUrls,
+      })
     );
     return;
   }
@@ -212,30 +229,69 @@ async function readStrategyBook(
   }
 }
 
+function readConfiguredEmulatorSlots({
+  authTokens = [],
+  ports,
+  urls = [],
+}: {
+  authTokens?: readonly string[];
+  ports: readonly number[];
+  urls?: readonly string[];
+}): Promise<ViewerEmulatorSlot[]> {
+  if (urls.length > 0) {
+    return readEmulatorTargets(
+      urls.map((baseUrl, index) => ({
+        authToken: authTokens[index],
+        baseUrl,
+      }))
+    );
+  }
+  return readEmulatorSlots(ports);
+}
+
 function readEmulatorSlots(
   ports: readonly number[]
 ): Promise<ViewerEmulatorSlot[]> {
+  return readEmulatorTargets(
+    ports.map((port) => ({ baseUrl: `http://127.0.0.1:${port}` }))
+  );
+}
+
+function readEmulatorTargets(
+  targets: readonly { authToken?: string; baseUrl: string }[]
+): Promise<ViewerEmulatorSlot[]> {
   return Promise.all(
-    ports.map((port, index) => readEmulatorSlot({ index, port }))
+    targets.map((target, index) => readEmulatorSlot({ index, ...target }))
   );
 }
 
 async function readEmulatorSlot({
+  authToken,
+  baseUrl,
   index,
-  port,
 }: {
+  authToken?: string;
+  baseUrl: string;
   index: number;
-  port: number;
 }): Promise<ViewerEmulatorSlot> {
-  const baseUrl = `http://127.0.0.1:${port}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1200);
+  const headers: HttpHeaders | undefined = authToken
+    ? {
+        Authorization: `Bearer ${authToken}`,
+        "X-Principal-Token": authToken,
+      }
+    : undefined;
   try {
     const [frameText, gameCode, gameTitle, screenshot] = await Promise.all([
-      fetchText(`${baseUrl}/core/currentframe`, controller.signal),
-      fetchText(`${baseUrl}/core/getgamecode`, controller.signal),
-      fetchText(`${baseUrl}/core/getgametitle`, controller.signal),
-      fetchEmulatorScreenshot(baseUrl, controller.signal),
+      fetchText(`${baseUrl}/core/currentframe`, controller.signal, "GET", headers),
+      fetchText(`${baseUrl}/core/getgamecode`, controller.signal, "GET", headers).catch(
+        () => "POKEMON"
+      ),
+      fetchText(`${baseUrl}/core/getgametitle`, controller.signal, "GET", headers).catch(
+        () => "POKEMON RED"
+      ),
+      fetchEmulatorScreenshot(baseUrl, controller.signal, headers),
     ]);
     const frame = Number.parseInt(frameText, 10);
     return {
@@ -264,16 +320,21 @@ async function readEmulatorSlot({
 
 async function fetchEmulatorScreenshot(
   baseUrl: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  headers?: HttpHeaders
 ): Promise<ViewerEmulatorSlot["screenshot"]> {
   const directory = join(tmpdir(), "pss-mgba-viewer-emulators");
   await mkdir(directory, { recursive: true });
   const path = join(directory, `${randomUUID()}.png`);
-  await fetchText(
+  const screenshot = await fetchBinaryOrText(
     `${baseUrl}/core/screenshot?path=${encodeURIComponent(path)}`,
     signal,
-    "POST"
+    "POST",
+    headers
   );
+  if (screenshot) {
+    return screenshot;
+  }
   return {
     data: (await readFile(path)).toString("base64"),
     mediaType: "image/png",
@@ -283,14 +344,34 @@ async function fetchEmulatorScreenshot(
 async function fetchText(
   url: string,
   signal: AbortSignal,
-  method: "GET" | "POST" = "GET"
+  method: "GET" | "POST" = "GET",
+  headers?: HttpHeaders
 ): Promise<string> {
-  const response = await fetch(url, { method, signal });
+  const response = await fetch(url, { headers, method, signal });
   const body = await response.text();
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   return body.trim();
+}
+
+async function fetchBinaryOrText(
+  url: string,
+  signal: AbortSignal,
+  method: "GET" | "POST",
+  headers?: HttpHeaders
+): Promise<ViewerEmulatorSlot["screenshot"] | undefined> {
+  const response = await fetch(url, { headers, method, signal });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+  if ((response.headers.get("content-type") ?? "").includes("image/png")) {
+    return {
+      data: Buffer.from(await response.arrayBuffer()).toString("base64"),
+      mediaType: "image/png",
+    };
+  }
+  return;
 }
 
 async function readRuns(runsDir: string): Promise<ViewerRun[]> {

@@ -259,6 +259,7 @@ describe("mGBA observation input", () => {
           context: `map=12 x=${index} y=14 facing=up`,
           lastSeenTurn: index + 20,
         })),
+        repeatedStateContexts: [],
         recentRecoveryAttempts: [
           {
             action: 'tap: {"button":"A"}',
@@ -305,7 +306,7 @@ describe("mGBA observation input", () => {
     expect(observedFrame).toBe(2817);
     expect(input).toEqual([
       {
-        text: expect.stringContaining("already-loaded Pokémon game"),
+        text: expect.stringContaining("fallback analyst"),
         type: "text",
       },
       expect.objectContaining({
@@ -351,7 +352,7 @@ describe("mGBA observation input", () => {
     expect(observedFrame).toBe(2817);
     expect(input).toEqual([
       {
-        text: expect.stringContaining("Turn 7 ended"),
+        text: expect.stringContaining("Fallback turn 7 ended"),
         type: "text",
       },
       expect.objectContaining({

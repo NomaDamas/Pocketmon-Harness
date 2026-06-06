@@ -18,12 +18,18 @@ export interface RunMetricsSnapshot {
   aButtonControlCalls: number;
   actionEntropy: number;
   controlToolCalls: number;
+  currentPhase: string | undefined;
   currentStepStartedAt: number | undefined;
   currentTurnStartedAt: number | undefined;
+  currentWaypoint: string | undefined;
+  deterministicActionsTotal: number;
+  deterministicVsLlmActionRatio: number;
   failedToolCalls: number;
+  fallbackRate: number;
   lastStepDurationMs: number;
   lastToolDurationMs: number;
   lastTurnDurationMs: number;
+  llmFallbackCallsTotal: number;
   maxSameActionStreak: number;
   observeBeforeActRatio: number;
   sameActionStreak: number;
@@ -41,6 +47,8 @@ export interface RunMetricsSnapshot {
   turnsWithObserveBeforeControl: number;
   uniqueActionCount: number;
   uniqueScreenCount: number;
+  verificationFailuresTotal: number;
+  verificationSuccessesTotal: number;
 }
 
 interface PendingToolCall {
@@ -62,16 +70,20 @@ export class RunMetricsTracker {
   readonly #screenHashes = new Set<string>();
   #aButtonControlCalls = 0;
   #controlToolCalls = 0;
+  #currentPhase: string | undefined;
+  #currentWaypoint: string | undefined;
   #currentStepStartedAt: number | undefined;
   #currentTurnHadControl = false;
   #currentTurnHadObservation = false;
   #currentTurnStartedAt: number | undefined;
   #failedToolCalls = 0;
+  #deterministicActionsTotal = 0;
   #lastActionKey: string | undefined;
   #lastScreenHash: string | undefined;
   #lastStepDurationMs = 0;
   #lastToolDurationMs = 0;
   #lastTurnDurationMs = 0;
+  #llmFallbackCallsTotal = 0;
   #maxSameActionStreak = 0;
   #sameActionStreak = 0;
   #screenChangedCount = 0;
@@ -80,6 +92,8 @@ export class RunMetricsTracker {
   #statusCalls = 0;
   #stuckEvents = 0;
   #supervisorInterventions = 0;
+  #verificationFailuresTotal = 0;
+  #verificationSuccessesTotal = 0;
   #stepCount = 0;
   #toolCalls = 0;
   #turnCount = 0;
@@ -156,6 +170,47 @@ export class RunMetricsTracker {
     this.#stuckEvents = Math.max(this.#stuckEvents, stuckEvents);
   }
 
+  recordControllerAction({
+    phase,
+    waypoint,
+  }: {
+    phase?: string;
+    waypoint?: string;
+  } = {}): void {
+    this.#deterministicActionsTotal += 1;
+    this.recordPhase({ phase, waypoint });
+  }
+
+  recordLlmFallback({
+    phase,
+    waypoint,
+  }: {
+    phase?: string;
+    waypoint?: string;
+  } = {}): void {
+    this.#llmFallbackCallsTotal += 1;
+    this.recordPhase({ phase, waypoint });
+  }
+
+  recordPhase({
+    phase,
+    waypoint,
+  }: {
+    phase?: string;
+    waypoint?: string;
+  }): void {
+    this.#currentPhase = phase ?? this.#currentPhase;
+    this.#currentWaypoint = waypoint ?? this.#currentWaypoint;
+  }
+
+  recordVerification(result: "failure" | "success"): void {
+    if (result === "failure") {
+      this.#verificationFailuresTotal += 1;
+      return;
+    }
+    this.#verificationSuccessesTotal += 1;
+  }
+
   prometheusMetrics(): string {
     const snapshot = this.snapshot();
     return [
@@ -172,6 +227,23 @@ export class RunMetricsTracker {
       "# HELP pss_mgba_stuck_events_total Repeated failed movement detections in the current run.",
       "# TYPE pss_mgba_stuck_events_total counter",
       `pss_mgba_stuck_events_total${this.#labels()} ${snapshot.stuckEvents}`,
+      "# HELP pss_mgba_controller_actions_total Deterministic controller and LLM fallback action counts.",
+      "# TYPE pss_mgba_controller_actions_total counter",
+      `pss_mgba_controller_actions_total${this.#labels("deterministic")} ${snapshot.deterministicActionsTotal}`,
+      `pss_mgba_controller_actions_total${this.#labels("llm_fallback")} ${snapshot.llmFallbackCallsTotal}`,
+      "# HELP pss_mgba_fallback_rate LLM fallback calls divided by controller plus fallback decisions.",
+      "# TYPE pss_mgba_fallback_rate gauge",
+      `pss_mgba_fallback_rate${this.#labels()} ${snapshot.fallbackRate}`,
+      "# HELP pss_mgba_deterministic_vs_llm_action_ratio Deterministic actions divided by LLM fallback calls.",
+      "# TYPE pss_mgba_deterministic_vs_llm_action_ratio gauge",
+      `pss_mgba_deterministic_vs_llm_action_ratio${this.#labels()} ${snapshot.deterministicVsLlmActionRatio}`,
+      "# HELP pss_mgba_verification_results_total Post-action verification result counts.",
+      "# TYPE pss_mgba_verification_results_total counter",
+      `pss_mgba_verification_results_total${this.#labels("success")} ${snapshot.verificationSuccessesTotal}`,
+      `pss_mgba_verification_results_total${this.#labels("failure")} ${snapshot.verificationFailuresTotal}`,
+      "# HELP pss_mgba_current_phase Current deterministic controller phase and waypoint.",
+      "# TYPE pss_mgba_current_phase gauge",
+      `pss_mgba_current_phase${this.#labelsWith({ phase: snapshot.currentPhase ?? "unknown", waypoint: snapshot.currentWaypoint ?? "unknown" })} 1`,
       "# HELP pss_mgba_control_a_button_ratio Ratio of control tool calls that include A.",
       "# TYPE pss_mgba_control_a_button_ratio gauge",
       `pss_mgba_control_a_button_ratio${this.#labels()} ${ratio(snapshot.aButtonControlCalls, snapshot.controlToolCalls)}`,
@@ -207,12 +279,24 @@ export class RunMetricsTracker {
       aButtonControlCalls: this.#aButtonControlCalls,
       actionEntropy: entropy([...this.#actionCounts.values()]),
       controlToolCalls: this.#controlToolCalls,
+      currentPhase: this.#currentPhase,
       currentStepStartedAt: this.#currentStepStartedAt,
       currentTurnStartedAt: this.#currentTurnStartedAt,
+      currentWaypoint: this.#currentWaypoint,
+      deterministicActionsTotal: this.#deterministicActionsTotal,
+      deterministicVsLlmActionRatio: ratio(
+        this.#deterministicActionsTotal,
+        this.#llmFallbackCallsTotal
+      ),
       failedToolCalls: this.#failedToolCalls,
+      fallbackRate: ratio(
+        this.#llmFallbackCallsTotal,
+        this.#deterministicActionsTotal + this.#llmFallbackCallsTotal
+      ),
       lastStepDurationMs: this.#lastStepDurationMs,
       lastToolDurationMs: this.#lastToolDurationMs,
       lastTurnDurationMs: this.#lastTurnDurationMs,
+      llmFallbackCallsTotal: this.#llmFallbackCallsTotal,
       maxSameActionStreak: this.#maxSameActionStreak,
       observeBeforeActRatio: ratio(
         this.#turnsWithObserveBeforeControl,
@@ -224,6 +308,8 @@ export class RunMetricsTracker {
       screenUnchangedStreak: this.#screenUnchangedStreak,
       statusCalls: this.#statusCalls,
       supervisorInterventions: this.#supervisorInterventions,
+      verificationFailuresTotal: this.#verificationFailuresTotal,
+      verificationSuccessesTotal: this.#verificationSuccessesTotal,
       stuckEvents: this.#stuckEvents,
       stepCount: this.#stepCount,
       toolCalls: this.#toolCalls,
@@ -237,6 +323,10 @@ export class RunMetricsTracker {
   }
 
   #labels(category?: string): string {
+    return this.#labelsWith(category ? { category, kind: category } : {});
+  }
+
+  #labelsWith(extra: Record<string, string | undefined>): string {
     const entries = [
       `run_id="${escapeLabel(this.#runId)}"`,
       `iteration="${this.#iteration}"`,
@@ -247,9 +337,10 @@ export class RunMetricsTracker {
     if (this.#experimentId) {
       entries.push(`experiment_id="${escapeLabel(this.#experimentId)}"`);
     }
-    if (category) {
-      entries.push(`category="${escapeLabel(category)}"`);
-      entries.push(`kind="${escapeLabel(category)}"`);
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined) {
+        entries.push(`${key}="${escapeLabel(value)}"`);
+      }
     }
     return `{${entries.join(",")}}`;
   }

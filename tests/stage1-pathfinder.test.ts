@@ -17,6 +17,27 @@ const route1State: PokemonStateObservation = {
 };
 
 describe("planStage1Path", () => {
+  it("skips the Pallet Town orientation waypoint after leaving the house", () => {
+    const plan = planStage1Path({
+      state: {
+        ...route1State,
+        mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
+        position: { x: 10, y: 12 },
+      },
+    });
+
+    expect(plan).toMatchObject({
+      action: "Up",
+      nextWaypoint: {
+        position: {
+          mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
+          x: 10,
+          y: 0,
+        },
+      },
+    });
+  });
+
   it("uses Dijkstra route planning toward Viridian City on Route 1", () => {
     const plan = planStage1Path({ state: route1State });
 
@@ -40,6 +61,7 @@ describe("planStage1Path", () => {
           lastSeenTurn: 7,
         },
       ],
+      repeatedStateContexts: [],
       recentRecoveryAttempts: [],
       stuckEvents: 1,
     };

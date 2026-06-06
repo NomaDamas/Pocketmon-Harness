@@ -20,11 +20,15 @@ const OBSERVATION_SETTLE_MS = parsePositiveInt(
 const STUCK_ATTEMPT_THRESHOLD = 3;
 const MAX_FAILED_EDGES = 12;
 
-interface AutopilotAction {
+export interface AutopilotAction {
   button: MgbaButton;
   duration?: number;
   reason: string;
   toolName: "mgba_hold" | "mgba_tap";
+}
+
+export interface ChooseStage1FastActionOptions {
+  unknownFallback?: "llm" | "probe";
 }
 
 interface MovementAttempt {
@@ -87,6 +91,7 @@ class FastBacktrackingMemory {
   snapshot(): StuckMemorySnapshot {
     return {
       failedMovementEdges: [...this.#failedEdges.values()],
+      repeatedStateContexts: [],
       recentRecoveryAttempts: [],
       stuckEvents: this.#stuckEvents,
     };
@@ -132,7 +137,11 @@ export async function runStage1FastAutopilot({
       return;
     }
 
-    const action = chooseAction(before, memory.snapshot());
+    const action = chooseStage1FastAction(before, memory.snapshot()) ?? {
+      button: "A",
+      reason: "standalone fallback probe",
+      toolName: "mgba_tap",
+    };
     await recorder.recordEvent(actionPlanEvent(step, action), { turn: step });
     await recorder.recordEvent(toolCallEvent(step, action), { turn: step });
     memory.beforeAction(before, action);
@@ -169,12 +178,16 @@ export async function runStage1FastAutopilot({
   }
 }
 
-function chooseAction(
+export function chooseStage1FastAction(
   observation: MgbaObservation,
-  stuckMemory: StuckMemorySnapshot
-): AutopilotAction {
+  stuckMemory: StuckMemorySnapshot,
+  { unknownFallback = "probe" }: ChooseStage1FastActionOptions = {}
+): AutopilotAction | undefined {
   const state = observation.state;
   if (!state || state.readStatus !== "available") {
+    if (unknownFallback === "llm") {
+      return;
+    }
     return {
       button: "A",
       reason: "RAM unavailable; advance visible state",
@@ -201,6 +214,9 @@ function chooseAction(
   }
   const plan = planStage1Path({ state, stuckMemory });
   if (!plan) {
+    if (unknownFallback === "llm") {
+      return;
+    }
     return {
       button: "A",
       reason: "no path plan; probe interaction",
@@ -256,12 +272,12 @@ function chooseRedHouse2fBootstrapAction(
     );
   }
   if (
-    (state.position.x ?? 0) < 4 &&
+    (state.position.x ?? 0) < 7 &&
     !blockedAtCurrentPosition(state, "Right", stuckMemory)
   ) {
     return holdAction(
       "Right",
-      "Red house 2F bootstrap: step from the bedroom start tile toward the center lane."
+      "Red house 2F bootstrap: move east along the north row toward the stairs warp."
     );
   }
   if (!blockedAtCurrentPosition(state, "Left", stuckMemory)) {

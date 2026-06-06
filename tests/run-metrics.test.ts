@@ -233,26 +233,34 @@ describe("RunMetricsTracker", () => {
 });
 
 describe("StuckMemory", () => {
-  it("detects repeated failed movement exactly on the 8th stationary overworld attempt", () => {
+  it("detects repeated failed movement exactly on the 3rd stationary overworld attempt", () => {
     const memory = new StuckMemory();
 
-    for (let turn = 1; turn <= 7; turn += 1) {
+    for (let turn = 1; turn <= 2; turn += 1) {
       memory.recordEvent(holdUp(`hold-${turn}`), observation(), turn);
       memory.observe(observation(), turn + 1);
 
       expect(memory.snapshot().stuckEvents).toBe(0);
     }
 
-    memory.recordEvent(holdUp("hold-8"), observation(), 8);
-    memory.observe(observation(), 9);
+    memory.recordEvent(holdUp("hold-3"), observation(), 3);
+    memory.observe(observation(), 4);
 
     expect(memory.snapshot()).toMatchObject({
       failedMovementEdges: [
         {
           action: "hold:Up",
-          attempts: 8,
+          attempts: 3,
           context: "map=12 x=10 y=14 facing=up",
-          lastSeenTurn: 9,
+          lastSeenTurn: 4,
+        },
+      ],
+      repeatedStateContexts: [
+        {
+          attempts: 3,
+          context: "map=12 x=10 y=14 facing=up",
+          lastAction: "hold:Up",
+          lastSeenTurn: 4,
         },
       ],
       stuckEvents: 1,
@@ -270,13 +278,14 @@ describe("StuckMemory", () => {
 
     for (const state of contexts) {
       const memory = new StuckMemory();
-      for (let turn = 1; turn <= 8; turn += 1) {
+      for (let turn = 1; turn <= 3; turn += 1) {
         memory.recordEvent(holdUp(`hold-${turn}`), observation(state), turn);
         memory.observe(observation(state), turn + 1);
       }
 
       expect(memory.snapshot().stuckEvents).toBe(0);
       expect(memory.snapshot().failedMovementEdges).toEqual([]);
+      expect(memory.snapshot().repeatedStateContexts).toEqual([]);
     }
   });
 });

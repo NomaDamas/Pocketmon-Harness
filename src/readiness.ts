@@ -142,6 +142,12 @@ async function mgbaHttpReadiness(
   const baseUrl = env.MGBA_HTTP_BASE_URL || DEFAULT_MGBA_BASE_URL;
   try {
     const response = await fetchImpl(new URL("/core/currentframe", baseUrl), {
+      headers: env.MGBA_HTTP_AUTH_TOKEN
+        ? {
+            Authorization: `Bearer ${env.MGBA_HTTP_AUTH_TOKEN}`,
+            "X-Principal-Token": env.MGBA_HTTP_AUTH_TOKEN,
+          }
+        : undefined,
       signal: AbortSignal.timeout(1500),
     });
     if (!response.ok) {
@@ -211,10 +217,22 @@ function selfImprovementReadiness(): ReadinessItem {
 }
 
 function parallelExecutionReadiness(env: NodeJS.ProcessEnv): ReadinessItem {
+  const urls = (env.POKEMON_PARALLEL_MGBA_URLS ?? "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
   const ports = (env.POKEMON_PARALLEL_MGBA_PORTS ?? "")
     .split(",")
     .map((port) => port.trim())
     .filter(Boolean);
+
+  if (urls.length >= 2) {
+    return {
+      detail: `${urls.length} independent session URL(s) configured for parallel runs`,
+      label: "Parallel execution",
+      status: "ready",
+    };
+  }
 
   if (ports.length >= 2) {
     return {

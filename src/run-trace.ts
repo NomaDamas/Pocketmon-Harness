@@ -1,8 +1,16 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  rename,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 const TRACE_ROOT = ".pss-mgba/traces";
 const ITERATION_COUNTER_PATH = join(TRACE_ROOT, "iteration-counter.json");
+const ITERATION_COUNTER_LOCK_DIR = join(TRACE_ROOT, "iteration-counter.lock");
 const ITERATIONS_JSONL_PATH = join(TRACE_ROOT, "iterations.jsonl");
 
 export const EXPERIMENT_MODES = [
@@ -22,17 +30,25 @@ export type SaveStateSupportStatus =
   | typeof SAVE_STATE_UNSUPPORTED_BY_CURRENT_MGBA_HTTP;
 
 export interface RunExperimentMetadata {
+  currentPhase?: string;
+  currentWaypoint?: string;
   experimentId?: string;
+  latestImprovementStatus?: string;
   milestone?: string;
   milestoneCurrent?: string;
   milestoneFurthest?: string;
   mode: ExperimentMode;
   objective?: string;
+  parallelBatchId?: string;
+  parallelEndpointLabel?: string;
+  parallelHypothesis?: string;
+  parallelInstance?: string;
   ramReadStatus?: string;
   runBudget?: string;
   saveStatePath?: string;
   saveStateStatus?: SaveStateSupportStatus;
   stateSource?: string;
+  stopReason?: string;
   stuckEvents?: number;
   supervisorEnabled?: boolean;
   supervisorInterventions?: number;
@@ -67,13 +83,7 @@ export async function createRunTrace(
 ): Promise<RunTrace> {
   await mkdir(TRACE_ROOT, { recursive: true });
 
-  const counter = await readIterationCounter();
-  const iteration = counter.nextIteration;
-  await writeFile(
-    ITERATION_COUNTER_PATH,
-    `${JSON.stringify({ nextIteration: iteration + 1 } satisfies IterationCounter)}
-`
-  );
+  const iteration = await allocateIteration();
 
   const startedAt = now.toISOString();
   const runId = `${iteration.toString().padStart(5, "0")}-${startedAt.replaceAll(/[:.]/g, "-")}`;
@@ -104,7 +114,15 @@ export async function createRunTrace(
 export async function createOptimizedFreshRunTrace(
   now = new Date()
 ): Promise<RunTrace> {
-  return await createRunTrace(now, OPTIMIZED_FRESH_RUN_METADATA);
+  return await createRunTrace(now, {
+    ...OPTIMIZED_FRESH_RUN_METADATA,
+    experimentId:
+      process.env.EXPERIMENT_ID ?? OPTIMIZED_FRESH_RUN_METADATA.experimentId,
+    parallelBatchId: process.env.PARALLEL_BATCH_ID,
+    parallelEndpointLabel: process.env.POKEMON_PARALLEL_ENDPOINT_LABEL,
+    parallelHypothesis: process.env.EXPERIMENT_HYPOTHESIS,
+    parallelInstance: process.env.POKEMON_RUN_INSTANCE,
+  });
 }
 
 export async function updateRunTraceMetadata(
@@ -168,6 +186,54 @@ async function readIterationCounter(): Promise<IterationCounter> {
   }
 
   return { nextIteration: 1 };
+}
+
+async function allocateIteration(): Promise<number> {
+  return await withIterationCounterLock(async () => {
+    const counter = await readIterationCounter();
+    const iteration = counter.nextIteration;
+    await writeIterationCounter({
+      nextIteration: iteration + 1,
+    });
+    return iteration;
+  });
+}
+
+async function writeIterationCounter(counter: IterationCounter): Promise<void> {
+  const tempPath = `${ITERATION_COUNTER_PATH}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(counter)}\n`);
+  await rename(tempPath, ITERATION_COUNTER_PATH);
+}
+
+async function withIterationCounterLock<T>(run: () => Promise<T>): Promise<T> {
+  await acquireIterationCounterLock();
+  try {
+    return await run();
+  } finally {
+    await rmdir(ITERATION_COUNTER_LOCK_DIR).catch(() => undefined);
+  }
+}
+
+async function acquireIterationCounterLock(): Promise<void> {
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      await mkdir(ITERATION_COUNTER_LOCK_DIR);
+      return;
+    } catch (error) {
+      if (!(error instanceof Error && hasCode(error, "EEXIST"))) {
+        throw error;
+      }
+      if (Date.now() - startedAt > 10_000) {
+        throw new Error("Timed out waiting for trace iteration counter lock");
+      }
+      await sleep(20);
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function hasCode(error: Error, code: string): boolean {

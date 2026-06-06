@@ -7,9 +7,10 @@ import type {
 } from "./pokemon-state";
 
 const MOVEMENT_BUTTONS = new Set(["Down", "Left", "Right", "Up"]);
-const STUCK_THRESHOLD = 8;
+const STUCK_THRESHOLD = 3;
 const MAX_FAILED_EDGES = 6;
 const MAX_RECOVERY_ATTEMPTS = 6;
+const MAX_REPEATED_CONTEXTS = 6;
 
 export interface FailedMovementEdge {
   action: string;
@@ -24,9 +25,17 @@ export interface RecoveryAttempt {
   turn: number;
 }
 
+export interface RepeatedStateContext {
+  attempts: number;
+  context: string;
+  lastAction: string;
+  lastSeenTurn: number;
+}
+
 export interface StuckMemorySnapshot {
   failedMovementEdges: readonly FailedMovementEdge[];
   recentRecoveryAttempts: readonly RecoveryAttempt[];
+  repeatedStateContexts: readonly RepeatedStateContext[];
   stuckEvents: number;
 }
 
@@ -50,10 +59,13 @@ interface MovementContext {
 
 export class StuckMemory {
   readonly #failedMovementEdges = new Map<string, FailedMovementEdge>();
+  readonly #repeatedStateContexts = new Map<string, RepeatedStateContext>();
   readonly #recentRecoveryAttempts: RecoveryAttempt[] = [];
   #lastFailedKey: string | undefined;
+  #lastRepeatedContextKey: string | undefined;
   #pendingMovementAttempt: PendingMovementAttempt | undefined;
   #repeatedFailedMovementAttempts = 0;
+  #repeatedStationaryContextAttempts = 0;
   #stuckEvents = 0;
 
   observe(observation: MgbaObservation, turn: number): void {
@@ -89,6 +101,11 @@ export class StuckMemory {
       context: pending.context.label,
       lastSeenTurn: turn,
     });
+    this.#recordRepeatedStateContext(
+      pending,
+      turn,
+      attempts >= STUCK_THRESHOLD
+    );
   }
 
   recordEvent(
@@ -122,6 +139,7 @@ export class StuckMemory {
   snapshot(): StuckMemorySnapshot {
     return {
       failedMovementEdges: [...this.#failedMovementEdges.values()],
+      repeatedStateContexts: [...this.#repeatedStateContexts.values()],
       recentRecoveryAttempts: [...this.#recentRecoveryAttempts],
       stuckEvents: this.#stuckEvents,
     };
@@ -137,6 +155,40 @@ export class StuckMemory {
         return;
       }
       this.#failedMovementEdges.delete(oldestKey);
+    }
+  }
+
+  #recordRepeatedStateContext(
+    pending: PendingMovementAttempt,
+    turn: number,
+    alreadyCountedByAction: boolean
+  ): void {
+    if (this.#lastRepeatedContextKey === pending.context.key) {
+      this.#repeatedStationaryContextAttempts += 1;
+    } else {
+      this.#lastRepeatedContextKey = pending.context.key;
+      this.#repeatedStationaryContextAttempts = 1;
+    }
+
+    const attempts = this.#repeatedStationaryContextAttempts;
+    if (attempts === STUCK_THRESHOLD && !alreadyCountedByAction) {
+      this.#stuckEvents += 1;
+    }
+
+    const edge: RepeatedStateContext = {
+      attempts,
+      context: pending.context.label,
+      lastAction: pending.action,
+      lastSeenTurn: turn,
+    };
+    this.#repeatedStateContexts.delete(pending.context.key);
+    this.#repeatedStateContexts.set(pending.context.key, edge);
+    while (this.#repeatedStateContexts.size > MAX_REPEATED_CONTEXTS) {
+      const oldestKey = this.#repeatedStateContexts.keys().next().value;
+      if (!oldestKey) {
+        return;
+      }
+      this.#repeatedStateContexts.delete(oldestKey);
     }
   }
 
@@ -186,10 +238,20 @@ export function formatStuckMemory(
         `- turn ${attempt.turn}: ${attempt.action} after ${attempt.context}`
     );
 
+  const repeatedContexts = memory.repeatedStateContexts
+    .slice(-MAX_REPEATED_CONTEXTS)
+    .map(
+      (context) =>
+        `- ${context.context}; stationary ${context.attempts}x; last action ${context.lastAction}; last turn ${context.lastSeenTurn}`
+    );
+
   return [
     "",
     "failed movement memory:",
     ...failedEdges,
+    ...(repeatedContexts.length > 0
+      ? ["repeated no-progress state memory:", ...repeatedContexts]
+      : []),
     ...(recoveryAttempts.length > 0
       ? ["recent recovery attempts:", ...recoveryAttempts]
       : []),

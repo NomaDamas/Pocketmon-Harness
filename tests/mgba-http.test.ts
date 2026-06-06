@@ -1,3 +1,6 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MgbaHttpClient } from "../src/mgba-http";
 
@@ -80,6 +83,75 @@ describe("MgbaHttpClient", () => {
       "http://127.0.0.1:5000/core/read8?address=0xD35E"
     );
     expect(init.method).toBe("GET");
+  });
+
+  it("unwraps mgba-server JSON command responses", async () => {
+    const fetchMock = vi.fn(async () =>
+      textResponse(
+        JSON.stringify({
+          latency_ms: 1,
+          request_id: "req",
+          response: "12<|SUCCESS|>",
+        }),
+        { headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = new MgbaHttpClient({
+      authToken: "session-token",
+      baseUrl: "http://127.0.0.1:8787/api/sessions/session-a",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(client.read8(0xd3_5e)).resolves.toBe(12);
+
+    const [_url, init] = fetchMock.mock.calls[0] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer session-token"
+    );
+  });
+
+  it("preserves mgba-server session base paths for core endpoints", async () => {
+    const fetchMock = vi.fn(async () =>
+      textResponse(
+        JSON.stringify({
+          response: "42<|SUCCESS|>",
+        }),
+        { headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = new MgbaHttpClient({
+      authToken: "session-token",
+      baseUrl: "http://127.0.0.1:8787/api/sessions/session-a",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(client.request("/core/currentframe")).resolves.toBe("42");
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe(
+      "http://127.0.0.1:8787/api/sessions/session-a/core/currentframe"
+    );
+  });
+
+  it("writes mgba-server PNG screenshot responses to the requested path", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const fetchMock = vi.fn(async () =>
+      new Response(png, {
+        headers: { "content-type": "image/png" },
+      })
+    );
+    const client = new MgbaHttpClient({
+      baseUrl: "http://127.0.0.1:8787/api/sessions/session-a",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const dir = await mkdtemp(join(tmpdir(), "mgba-http-test-"));
+    const path = join(dir, "frame.png");
+
+    await expect(client.screenshot(path)).resolves.toBe("ok");
+    await expect(readFile(path)).resolves.toEqual(png);
   });
 
   it("parses active buttons and ignores unknown values", async () => {

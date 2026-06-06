@@ -47,6 +47,7 @@ describe("formatStage1RuntimePlan", () => {
             lastSeenTurn: 4,
           },
         ],
+        repeatedStateContexts: [],
         recentRecoveryAttempts: [],
         stuckEvents: 0,
       },
