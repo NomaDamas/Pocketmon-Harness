@@ -25,6 +25,7 @@ import {
 } from "./run-trace";
 import { createTurnPrompt, streamSupervisedRun } from "./runner";
 import { improveLatestTrace } from "./self-improvement";
+import { SharedStrategyMemory } from "./shared-strategy";
 import type { AutopilotAction } from "./stage1-fast-autopilot";
 import { shouldStopHarness } from "./stop-controller";
 import { StuckMemory } from "./stuck-memory";
@@ -90,6 +91,9 @@ const metricsServer = startMetricsServer(tokenUsageTracker, runMetricsTracker, {
 const recentActions: string[] = [];
 const milestoneTracker = new PokemonMilestoneTracker();
 const stuckMemory = new StuckMemory();
+const sharedStrategyMemory = new SharedStrategyMemory({
+  runId: runTrace.runId,
+});
 const observationBookkeeping = new ObservationBookkeeping({
   runMetricsTracker,
   stuckMemory,
@@ -278,6 +282,32 @@ async function closeMetricsServer(): Promise<void> {
 
 async function tryExecuteDeterministicPolicy(): Promise<boolean> {
   const observation = await captureMgbaObservation(mgbaClient);
+  const sharedSuggestion = await sharedStrategyMemory.suggest(observation);
+  if (sharedSuggestion) {
+    runMetricsTracker.recordControllerAction({
+      phase: sharedSuggestion.phase,
+      waypoint: sharedSuggestion.waypoint,
+    });
+    runTrace = await updateRunTraceMetadata(runTrace, {
+      currentPhase: sharedSuggestion.phase,
+      currentWaypoint: sharedSuggestion.waypoint,
+    });
+    await recordTurnObservation(observation);
+    await executeDeterministicButtonAction({
+      action: sharedSuggestion.action,
+      before: observation,
+      expectedOutcome:
+        sharedSuggestion.action.toolName === "mgba_hold"
+          ? "movement-or-map-change"
+          : "dialogue-progress",
+      id: `shared-strategy-${turnsRun}`,
+      phase: sharedSuggestion.phase,
+      policy: "shared-strategy",
+      waypoint: sharedSuggestion.waypoint,
+    });
+    return true;
+  }
+
   const decision = chooseDeterministicPolicyAction({
     observation,
     recentActions,
@@ -316,7 +346,9 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
     before: observation,
     expectedOutcome: decision.expectedOutcome,
     id: `deterministic-${decision.policy}-${turnsRun}`,
+    phase: decision.phase,
     policy: decision.policy,
+    waypoint: decision.waypoint,
   });
   return true;
 }
@@ -326,16 +358,20 @@ async function executeDeterministicButtonAction({
   before,
   expectedOutcome,
   id,
+  phase,
   policy,
+  waypoint,
 }: {
   action: AutopilotAction;
   before: MgbaObservation;
   expectedOutcome?:
     | "battle-progress"
     | "dialogue-progress"
-    | "movement-or-map-change";
+      | "movement-or-map-change";
   id: string;
+  phase: string;
   policy: string;
+  waypoint: string;
 }): Promise<void> {
   const actionPlan = {
     text: `<action_plan>${policy}: ${action.reason}; execute ${action.toolName} ${action.button} without LLM.</action_plan>`,
@@ -382,6 +418,14 @@ async function executeDeterministicButtonAction({
   runMetricsTracker.recordVerification(
     verification.success ? "success" : "failure"
   );
+  await sharedStrategyMemory.recordActionSuccess({
+    action,
+    before,
+    expectedOutcome,
+    phase,
+    success: verification.success,
+    waypoint,
+  });
   const verificationEvent = {
     text: `<verification_result success="${verification.success}" expected="${expectedOutcome ?? "none"}">${verification.reason}</verification_result>`,
     type: "assistant-text",

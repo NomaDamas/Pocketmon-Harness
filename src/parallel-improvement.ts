@@ -145,13 +145,13 @@ async function scoreRun(
     (event) =>
       event.type === "agent-event" &&
       event.summary?.kind === "action_tool_call" &&
-      String(event.summary.toolCallId ?? "").startsWith("deterministic-")
+      isControllerToolCallId(String(event.summary.toolCallId ?? ""))
   ).length;
   const fallbackCalls = events.filter(
     (event) =>
       event.type === "agent-event" &&
       event.summary?.kind === "action_tool_call" &&
-      !String(event.summary.toolCallId ?? "").startsWith("deterministic-")
+      !isControllerToolCallId(String(event.summary.toolCallId ?? ""))
   ).length;
   const progressScore =
     MILESTONE_SCORE[run.milestoneFurthest ?? ""] ?? transitions * 5;
@@ -176,6 +176,13 @@ async function scoreRun(
     verificationFailures,
     verificationSuccesses,
   };
+}
+
+function isControllerToolCallId(toolCallId: string): boolean {
+  return (
+    toolCallId.startsWith("deterministic-") ||
+    toolCallId.startsWith("shared-strategy-")
+  );
 }
 
 function createProposal(
