@@ -7,7 +7,7 @@
 Autonomous Pokemon gameplay harness for an already-running mGBA instance. The
 agent controls the emulator through `mGBA-http`, receives a fresh observed state
 at the start of every turn, and records enough trace/metric data to compare
-experiments without changing `@minpeter/pss-runtime`.
+experiments without changing the shared runtime dependency.
 
 This branch is intentionally local-harness focused: Pokemon RAM reads, movement
 supervision, stuck memory, milestone scoring, screenshot processing, and run
@@ -568,18 +568,25 @@ stuck behavior, action entropy, tool reliability, or ROM identity gets worse.
 
 Task 9 recorded `NO_RUNTIME_CHANGE` in `.omo/evidence/task-9-runtime-gate.md`.
 That remains the default boundary: do not move harness-specific behavior into
-`@minpeter/pss-runtime` without separate cross-harness evidence.
+the shared runtime package without separate cross-harness evidence.
 
-Exception: PR 39 updates this harness to published `@minpeter/pss-runtime@0.0.8`
-to use the released `toolChoice` and `session.steer(...)` APIs. The implementation
-stays local to this repository: the runtime package source is not modified, and
-after-step screenshots are steered into the active session before the next model
-step.
+Exception: PR 39 updates this harness to the published runtime package version
+used by this repository so it can use the released `toolChoice` and
+`session.steer(...)` APIs. The implementation stays local to this repository:
+the runtime package source is not modified, and after-step screenshots are
+steered into the active session before the next model step.
 
-Only move work into `@minpeter/pss-runtime` after multiple runs prove the same
-need outside this Pokemon/mGBA harness and the evidence names the affected
+Only move work into the shared runtime package after multiple runs prove the
+same need outside this Pokemon/mGBA harness and the evidence names the affected
 runtime loop, session, event, budget, metric, store, or replay contract.
 
 ## 👤 Contributor
 
 - minsing-jin <ironman0722@naver.com>
+
+### 🙏 Acknowledgements
+
+This project is maintained and developed by the contributor above. It builds on
+the Pokemon Red emulation ecosystem, including mGBA, mGBA-http-style emulator
+control, mgba-server-style parallel session ideas, and public Pokemon Red
+research/disassembly knowledge used as technical reference material.
