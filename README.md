@@ -77,7 +77,8 @@ objects.
 
 ## ⚙️ Requirements
 
-- Node.js 20 or newer
+- Node.js 22 recommended. The package floor is Node 20, but current pnpm/tooling
+  paths are most stable on Node 22.
 - pnpm 11.2.2
 - mGBA with the `mGBASocketServer.lua` script
 - `mGBA-http`
@@ -92,15 +93,15 @@ pnpm install
 Copy `.env.example` to `.env` and configure the local emulator and model:
 
 ```bash
-MGBA_HTTP_BASE_URL=http://127.0.0.1:5000
+MGBA_HTTP_BASE_URL=http://127.0.0.1:5100
 POKEMON_ROM_PATH=
 AI_PROVIDER=openai-compatible
 AI_BASE_URL=
 AI_API_KEY=
 AI_MODEL=
 AI_MICRO_MODEL=gpt-5.3-codex-spark
-STAGE1_FAST_MOVEMENT_FRAMES=10
-STAGE1_FAST_SETTLE_MS=45
+HARNESS_MAX_STEPS=120
+HARNESS_MAX_MINUTES=10
 METRICS_HTTP_HOST=0.0.0.0
 METRICS_HTTP_PORT=9464
 ```
@@ -128,7 +129,7 @@ mkdir -p .pss-mgba/saves
 /Applications/mGBA.app/Contents/MacOS/mGBA \
   -C savegamePath=/Users/jinminseong/Desktop/pocketmon-harness/.pss-mgba/saves \
   /absolute/path/to/legal/rom.gb
-.local-tools/mgba-http/mGBA-http
+POKEMON_PARALLEL_MGBA_PORTS=5100 scripts/start-mgba-http-parallel.sh
 pnpm dev
 ```
 
@@ -144,8 +145,9 @@ when the ROM is outside a writable experiment directory.
 
 ## 🚀 Live Demo Runbook
 
-Use this sequence when demonstrating the current harness locally. Long-running
-commands should be started in separate terminals:
+Use this sequence when demonstrating the current harness locally with one visible
+GUI emulator. Long-running commands should be started in separate terminals.
+Port `5100` avoids macOS services that commonly occupy or intercept port `5000`:
 
 ```bash
 # Terminal 1: emulator
@@ -156,7 +158,7 @@ mkdir -p .pss-mgba/saves
   /Users/jinminseong/Downloads/Pokemon\ -\ Red\ Version.gb
 
 # Terminal 2: mGBA HTTP bridge
-.local-tools/mgba-http/mGBA-http
+POKEMON_PARALLEL_MGBA_PORTS=5100 scripts/start-mgba-http-parallel.sh
 
 # Terminal 3: web dashboard
 pnpm viewer
@@ -168,7 +170,9 @@ pnpm tui
 AI_PROVIDER=grok \
 AI_MODEL=grok-4.3 \
 AI_MICRO_MODEL=grok-3-mini-fast \
-MGBA_HTTP_BASE_URL=http://127.0.0.1:5000 \
+MGBA_HTTP_BASE_URL=http://127.0.0.1:5100 \
+HARNESS_MAX_STEPS=120 \
+HARNESS_MAX_MINUTES=10 \
 pnpm dev
 ```
 
@@ -178,18 +182,20 @@ README, logs, traces, screenshots, or commits.
 Reset the current emulator before a clean attempt:
 
 ```bash
-curl -i -X POST http://127.0.0.1:5000/coreadapter/reset
+curl -i -X POST http://127.0.0.1:5100/coreadapter/reset
 ```
 
 Run the deterministic Stage 1 autopilot when you want a fast non-LLM baseline:
 
 ```bash
-MGBA_HTTP_BASE_URL=http://127.0.0.1:5000 pnpm stage1:fast
+MGBA_HTTP_BASE_URL=http://127.0.0.1:5100 pnpm stage1:fast
 ```
 
-The harness expects one live emulator server. Do not start a second mGBA or
-`mGBA-http` process for a live experiment; the current emulator state is the
-state being measured.
+The visible GUI harness expects one connected emulator server. For multiple
+visible GUI windows, each mGBA window must load the Lua socket script and bind a
+separate socket such as `8888`, `8889`, and `8890`; each socket then needs its own
+`mGBA-http` bridge such as `5100`, `5101`, and `5102`. Do not point multiple
+harness processes at the same emulator.
 
 Check all live prerequisites before a run:
 
@@ -203,21 +209,36 @@ and parallel-run configuration without printing secrets.
 
 ## 🔁 Runtime Loop
 
-`src/index.ts` creates a persistent `pokemon-run` session and loops forever.
-Each turn:
+`src/index.ts` creates a persistent `pokemon-run` session, but the LLM is no
+longer the default player. The current authority order is:
 
-1. Captures mGBA status, screenshot, and Pokemon RAM state when available.
-2. Crops Game Boy screenshots to 160x144 and overlays red 16x16 movement guide
-   lines for navigation.
-3. Injects the observed state, screenshot, recent actions, and stuck-memory
-   hints into the model input.
-4. Asks the model to emit one `<action_plan>...</action_plan>` block and execute
-   exactly one useful game action.
-5. Streams runtime events into pretty logs, token traces, behavior metrics, and
-   Prometheus output.
+1. Capture mGBA status, screenshot, and Pokemon Red RAM state when available.
+2. Detect the phase from map id, coordinates, battle/menu/dialogue signals, and
+   recent action evidence.
+3. Check shared strategy memory for peer-proven subgoal actions in the same
+   batch.
+4. Run deterministic Stage 1 policy/pathfinder when the phase and map are known.
+5. Execute the supervised button action and verify whether state changed as
+   expected.
+6. Call the LLM only when the controller reports unknown phase, unsupported UI,
+   repeated verification failure, missing RAM, or route graph escape.
+7. Stream runtime events into pretty logs, token traces, behavior metrics,
+   shared strategy records, and Prometheus output.
 
-There is no CLI prompt, `--loop` flag, max-turn stop condition, or completion
-marker. Stop the process with `Ctrl-C` when the experiment window ends.
+The model prompt is fallback-analyst oriented, not player-authority oriented:
+the harness owns route memory, deterministic execution, and verification.
+
+Stop and budget controls are environment variables:
+
+```bash
+HARNESS_MAX_STEPS=50
+HARNESS_MAX_TURNS=50
+HARNESS_MAX_TOKENS=200000
+HARNESS_MAX_MINUTES=5
+```
+
+When a limit is reached, the run exits gracefully and records the stop reason in
+trace metadata.
 
 ## 🎛️ Control Plane
 
@@ -367,6 +388,17 @@ when the run stalls. New candidates are injected into later observations as
 self-improvement hints, so the next Grok action loop can adapt without exposing
 API secrets.
 
+🌳 Shared strategy memory for parallel runs:
+
+- Each parallel batch writes peer-visible subgoal evidence to
+  `.pss-mgba/shared-strategy/<batch-id>.jsonl`.
+- When one harness reaches a useful RAM state transition such as moving from the
+  bedroom toward the stair waypoint, sibling harnesses in the same batch can
+  reuse that state/action hint before calling the LLM.
+- This is fast tactical sharing, not unrestricted self-modifying code. Active
+  rules, skills, and pathfinder knowledge still move through
+  `improve:parallel` proposal files and explicit QA-gated promotion.
+
 📊 Watch progress while the loop runs:
 
 ```bash
@@ -379,12 +411,18 @@ pnpm tui
   usage, and supervisor interventions.
 - Trace files: `.pss-mgba/traces/runs/<run-id>/events.jsonl`
 
-Run multiple live harness instances when multiple mGBA HTTP servers are already
-running. For classic `mGBA-http`, use independent ports:
+Run multiple live harness instances when multiple independent emulator endpoints
+are already running. For classic visible GUI `mGBA-http`, use independent ports:
 
 ```bash
-POKEMON_PARALLEL_MGBA_PORTS=5001,5002 pnpm parallel:run
+scripts/start-mgba-http-parallel.sh
+POKEMON_PARALLEL_MGBA_PORTS=5100,5101,5102 pnpm parallel:run
 ```
+
+That starts or targets bridges only; each bridge still needs a separate mGBA GUI
+window with the Lua socket script loaded on a matching socket. If you want the
+parallel boards visible without manually wiring several GUI windows, use
+`mgba-server` sessions and watch them in the web viewer.
 
 For `mgba-server` session URLs, keep the generated session principals in a
 local env file and do not print them:
@@ -492,7 +530,7 @@ Connectivity probe before a live run:
 python3 - <<'PY'
 import urllib.request
 for path in ['/core/currentframe','/core/getgamecode','/core/getgametitle','/mgba-http/button/getall']:
-    with urllib.request.urlopen('http://127.0.0.1:5000'+path, timeout=2) as response:
+    with urllib.request.urlopen('http://127.0.0.1:5100'+path, timeout=2) as response:
         print(path, response.status, response.read(200).decode('utf-8','replace'))
 PY
 ```
@@ -500,7 +538,7 @@ PY
 Five-minute experiment window:
 
 ```bash
-MGBA_HTTP_BASE_URL=http://127.0.0.1:5000 pnpm dev > .omo/evidence/<task>-pnpm-dev.log 2>&1 & PID=$!; sleep 300; kill -INT $PID; wait $PID || true
+MGBA_HTTP_BASE_URL=http://127.0.0.1:5100 pnpm dev > .omo/evidence/<task>-pnpm-dev.log 2>&1 & PID=$!; sleep 300; kill -INT $PID; wait $PID || true
 ```
 
 Valid run modes are `fresh`, `resumed`, `recovery`, `deterministic-replay`, and
@@ -541,3 +579,7 @@ step.
 Only move work into `@minpeter/pss-runtime` after multiple runs prove the same
 need outside this Pokemon/mGBA harness and the evidence names the affected
 runtime loop, session, event, budget, metric, store, or replay contract.
+
+## 👤 Contributor
+
+- minsing-jin <ironman0722@naver.com>
