@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="./assets/banner.png" alt="Which harness is the best Pokémon trainer?" width="100%" />
-</p>
-
 # 🎮 Pocketmon Harness
 
 Pocketmon Harness is minsingjin's autonomous Pokemon Red research harness for
@@ -9,7 +5,7 @@ controller-primary gameplay, evidence-based self-improvement, and parallel
 strategy exploration. It controls an already-running mGBA instance through
 `mGBA-http`, reads RAM and screenshots, executes deterministic skills first,
 uses the model only as a fallback analyst, and records enough trace/metric data
-to compare experiments without changing the shared runtime dependency.
+to compare experiments from trace evidence.
 
 This branch is intentionally local-harness focused: Pokemon RAM reads, movement
 supervision, stuck memory, milestone scoring, screenshot processing, and run
@@ -30,7 +26,7 @@ metrics all live here unless separate evidence proves a generic runtime need.
 - [Methodology Coverage](#-methodology-coverage)
 - [Gap Closure Contract](#-gap-closure-contract)
 - [Verification](#-verification)
-- [Owner And Contributor](#-owner-and-contributor)
+- [Owner](#-owner)
 
 ## 🧭 Mission
 
@@ -744,40 +740,10 @@ Keep evidence tied to run id and ROM identity.
 Reject or roll back an improvement when token usage improves but progress,
 stuck behavior, action entropy, tool reliability, or ROM identity gets worse.
 
-## 🧩 Runtime Boundary
-
-Task 9 recorded `NO_RUNTIME_CHANGE` in `.omo/evidence/task-9-runtime-gate.md`.
-That remains the default boundary: do not move harness-specific behavior into
-the shared runtime package without separate cross-harness evidence.
-
-Exception: PR 39 updates this harness to the published runtime package version
-used by this repository so it can use the released `toolChoice` and
-`session.steer(...)` APIs. The implementation stays local to this repository:
-the runtime package source is not modified, and after-step screenshots are
-steered into the active session before the next model step.
-
-Only move work into the shared runtime package after multiple runs prove the
-same need outside this Pokemon/mGBA harness and the evidence names the affected
-runtime loop, session, event, budget, metric, store, or replay contract.
-
-## 👤 Owner And Contributor
+## 👤 Owner
 
 - minsingjin
 
-The source-of-truth owner/maintainer identity for this project is `minsingjin`.
-The intended GitHub home for this project is
+The source-of-truth owner, maintainer, and developer identity for this project
+is `minsingjin`. The GitHub home for this project is
 `https://github.com/NomaDamas/Pocketmon-Harness`.
-
-When preserving history in a public GitHub repository, contributor cards are
-derived from commit authors. This repository therefore normalizes contributor
-identity with `.mailmap`, and migrations to a new public repository should use a
-minsingjin-authored history when the public contributor card must show only the
-maintainer.
-
-### 🙏 Acknowledgements
-
-This project is maintained and developed by `minsingjin`. It uses the Pokemon
-Red emulation ecosystem, including mGBA-compatible control surfaces, parallel
-emulator session ideas, and public Pokemon Red research/disassembly knowledge as
-technical reference material. These are acknowledgements of tools and references,
-not additional project contributors.
