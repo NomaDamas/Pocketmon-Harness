@@ -742,8 +742,28 @@ stuck behavior, action entropy, tool reliability, or ROM identity gets worse.
 
 ## 👤 Contributors
 
-- minsingjin: project owner and maintainer
-- Woonggi Min / 민웅기: baseline harness contributor
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/minsing-jin">
+        <img src="https://avatars.githubusercontent.com/minsing-jin?s=120" width="96" height="96" alt="minsingjin" />
+        <br />
+        <sub><b>minsingjin</b></sub>
+      </a>
+      <br />
+      <sub>Project owner and maintainer</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/minpeter">
+        <img src="https://avatars.githubusercontent.com/minpeter?s=120" width="96" height="96" alt="Woonggi Min / 민웅기" />
+        <br />
+        <sub><b>Woonggi Min / 민웅기</b></sub>
+      </a>
+      <br />
+      <sub>Baseline harness contributor</sub>
+    </td>
+  </tr>
+</table>
 
 The GitHub home for this project is
 `https://github.com/NomaDamas/Pocketmon-Harness`.
