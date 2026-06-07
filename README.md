@@ -740,12 +740,10 @@ Keep evidence tied to run id and ROM identity.
 Reject or roll back an improvement when token usage improves but progress,
 stuck behavior, action entropy, tool reliability, or ROM identity gets worse.
 
-## 👤 Owner And Baseline Contributor
+## 👤 Contributors
 
-- minsingjin
-- Baseline contributor: Woonggi Min / 민웅기
+- minsingjin: project owner and maintainer
+- Woonggi Min / 민웅기: baseline harness contributor
 
-The source-of-truth owner, maintainer, and developer identity for this project
-is `minsingjin`. The original baseline harness contribution is acknowledged to
-Woonggi Min / 민웅기. The GitHub home for this project is
+The GitHub home for this project is
 `https://github.com/NomaDamas/Pocketmon-Harness`.
