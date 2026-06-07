@@ -1,3 +1,6 @@
+<img width="1584" height="672" alt="Gemini_Generated_Image_9zanze9zanze9zan" src="https://github.com/user-attachments/assets/a045c07e-d090-4f49-bb71-19c411d41c0d" />
+
+
 # 🎮 Pocketmon Harness
 
 Pocketmon Harness is minsingjin's autonomous Pokemon Red research harness for
