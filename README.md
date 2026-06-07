@@ -37,6 +37,27 @@ slice is Stage 0/1 because those stages are where controller-primary execution,
 RAM verification, stuck memory, and self-improvement gates are already wired.
 Later stages are explicit roadmap targets, not vague future wishes.
 
+## 🧬 Seed Philosophy
+
+This repository follows minsingjin's original seed:
+
+1. The model is not the player.
+   The harness owns state, route memory, verification, budget, and promotion.
+   The model is a fallback analyst when deterministic authority is insufficient.
+2. Pokemon knowledge is not one huge prompt.
+   Rules, maps, quests, battles, resources, skills, failures, and proposals are
+   separated into machine-readable memory layers.
+3. Gameplay improves from evidence.
+   Runs write traces, repeated failures become candidates, candidates are scored,
+   and only QA-gated promotions can update active hierarchy.
+4. Parallel runs are hypothesis experiments.
+   Multiple emulator endpoints test different strategies, share tactical
+   subgoal evidence, and produce promotion proposals instead of silently
+   rewriting the rulebook.
+5. Full-game completion is staged, not hand-waved.
+   Stage 1 proves the controller-primary loop; later stages expand the same
+   memory/controller/evaluator pattern until Champion completion.
+
 ## 🧱 Architecture At A Glance
 
 ```text
@@ -114,6 +135,24 @@ needed for the current phase.
 This is the core seed philosophy: the model does not memorize Pokemon Red. The
 harness owns structured memory and lets the model act only as a fallback analyst
 when deterministic controller authority is insufficient.
+
+## 🧩 Codebase Map
+
+The README is intentionally tied to code paths so architecture claims can be
+checked quickly.
+
+| Responsibility | Primary files |
+| --- | --- |
+| 🎯 Full-game roadmap | `src/pokemon-red-full-game-plan.ts`, `tests/pokemon-red-full-game-plan.test.ts` |
+| 🧠 Runtime authority loop | `src/index.ts`, `src/deterministic-policy.ts`, `src/runner.ts` |
+| 👀 Observation and RAM state | `src/observation.ts`, `src/pokemon-state.ts`, `src/screenshot-image.ts` |
+| 🧭 Phase and route planning | `src/phase-detector.ts`, `src/stage1-pathfinder.ts`, `src/stage1-fast-autopilot.ts` |
+| 📖 Rule/skill/manual memory | `src/stage1-memory.ts`, `src/stage1-active-rules.ts`, `src/stage1-active-skills.ts`, `src/stage1-active-route-knowledge.ts` |
+| ✅ Verification and stop control | `src/observation-bookkeeping.ts`, `src/stuck-memory.ts`, `src/stop-controller.ts`, `src/run-metrics.ts`, `src/token-usage.ts` |
+| 🧪 Self-improvement | `src/self-improvement.ts`, `src/self-improvement-watch.ts`, `src/improvement-hints.ts`, `src/strategy-book.ts` |
+| 🧵 Parallel evidence | `src/parallel-runner.ts`, `src/parallel-improvement.ts`, `src/parallel-promote.ts`, `src/shared-strategy.ts` |
+| 📊 Observability | `src/tui.ts`, `src/tui-summary.ts`, `src/viewer-server.ts`, `src/viewer-events.ts`, `src/metrics-server.ts` |
+| 🐍 Formal process evidence | `docs/ouroboros-formal-process.md`, `docs/ouroboros-formal-evaluate-result.md`, `docs/ouroboros-formal-ralph-result.md` |
 
 ## ⚙️ Requirements
 
@@ -443,6 +482,24 @@ API secrets.
   rules, skills, and pathfinder knowledge still move through
   `improve:parallel` proposal files and explicit QA-gated promotion.
 
+📚 Strategy hierarchy update flow:
+
+```text
+parallel live runs
+  -> trace collection
+  -> hypothesis scoring
+  -> successful transition / anti-pattern extraction
+  -> candidate rule / skill / pathfinder proposal
+  -> conflict and evidence gate
+  -> explicit promote command
+  -> active hierarchy used by the next run
+```
+
+This means a sibling harness can immediately imitate a proven subgoal action
+through shared strategy memory, but durable guidebook updates still require
+proposal and promotion. That boundary prevents reward hacking where a bad run
+rewrites the guidebook just because it generated a confident explanation.
+
 📊 Watch progress while the loop runs:
 
 ```bash
@@ -520,24 +577,23 @@ cleanly instead of handing long-horizon play back to the LLM.
 | 🧑 Human intervention | The model cannot reset/reload ROM; humans can reset or stop/restart processes externally. |
 | 🐍 Ouroboros/Ralph process | Formal local evaluate/Ralph artifacts are documented in `docs/`; live Ralph MCP is gated on missing MCP tools. |
 
-## 🚧 Current Gaps And Boundaries
+## 🚧 Gap Closure Contract
 
-These are intentionally documented so the README does not overclaim:
+The project does not hide gaps or claim fake completion. A gap is acceptable
+only when it is attached to a closure path, evidence source, and promotion gate.
 
-- 🕹️ True parallel gameplay requires multiple independent emulator endpoints:
-  either separate mGBA + Lua socket + `mGBA-http` pairs or independent
-  `mgba-server` worker sessions.
-- 🧪 Candidate patches are not automatically promoted into active rules; this is
-  a safety boundary until QA gates are stronger.
-- 🗺️ The full-game objective is now represented in code, but the deterministic
-  runtime controller is currently active only for Stage 0/1 plus bounded
-  fallback recovery. Stage 2-5 route graphs must be promoted incrementally with
-  replay evidence.
-- 🥊 Battle policy is basic; full Gen 1 type matchups, team building, HM
-  planning, and Elite Four strategy are planned memory/controller layers, not
-  completed runtime authority yet.
-- 🐍 Ralph MCP execution cannot be started unless the Ouroboros MCP exposes
-  `ouroboros_ralph` and related job tools in the active Codex session.
+| Gap | Current boundary | Closure path |
+| --- | --- | --- |
+| 🕹️ Visible parallel gameplay | Requires independent emulator endpoints: separate mGBA + Lua socket + `mGBA-http`, or independent `mgba-server` sessions | Start one harness per endpoint with `parallel:run`, then score the batch with `improve:parallel` |
+| 🧪 Automatic rulebook mutation | Active rules/skills/pathfinder are not silently rewritten | Generate proposals, run QA/tests/replay, then explicitly promote with `improve:promote` |
+| 🗺️ Full world graph | Runtime controller authority is active for Stage 0/1, with full-game stages represented in code | Promote Stage 2-5 map/quest/route memory incrementally from trace evidence |
+| 🥊 Deep battle strategy | Current battle policy is basic and safe | Add Gen 1 type chart, PP/status/item/team policy as battle memory and evaluator-tested skills |
+| 📦 Oak/Pokedex onward | Stage 2 is planned, not claimed as solved runtime | Add Viridian Mart, return route, Oak Lab, and Pokedex waypoints with RAM verification |
+| 🐍 Ralph MCP live loop | Formal docs exist, but live MCP Ralph depends on session tool availability | Run local evaluate artifacts now; start MCP Ralph only when `ouroboros_ralph` is exposed |
+
+Nothing moves from `planned` to `active` because it sounds plausible. It must
+produce trace evidence, pass tests, avoid regressions, and keep controller
+authority ahead of LLM fallback.
 
 ## 📊 Grafana
 
