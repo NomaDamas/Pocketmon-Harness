@@ -103,6 +103,7 @@ let session: SessionHandle;
 let activeAiRuntimeConfig = aiRuntimeConfig;
 let ramUnavailableFallbacks = 0;
 let requestedStopReason: string | undefined;
+let boundedFallbackActive = false;
 let turnsRun = 0;
 
 session = await createPokemonSession(activeAiRuntimeConfig);
@@ -132,6 +133,9 @@ async function createPokemonSession(config: {
     hooks: {
       afterStep: async ({ result, signal, stepIndex }) => {
         if (result !== "continue") {
+          return;
+        }
+        if (boundedFallbackActive) {
           return;
         }
 
@@ -210,8 +214,14 @@ while (true) {
 
   try {
     const run = await session.send(createTurnPrompt(turnsRun));
+    boundedFallbackActive = true;
     await streamSupervisedRun({
       client: mgbaClient,
+      maxSteps: 1,
+      maxToolResults: 1,
+      onLimit: () => {
+        session.interrupt();
+      },
       onEvent: (event) => {
         runMetricsTracker.recordEvent(event);
         observationBookkeeping.recordEvent(event, turnsRun);
@@ -230,6 +240,7 @@ while (true) {
     });
     await tokenUsageTracker.endTurn();
   } catch (error) {
+    boundedFallbackActive = false;
     if (error instanceof HarnessStopError) {
       await tokenUsageTracker.endTurn();
       await stopHarness(error.reason);
@@ -241,6 +252,8 @@ while (true) {
       continue;
     }
     throw error;
+  } finally {
+    boundedFallbackActive = false;
   }
   await persistRunMetricsMetadata();
 }
@@ -260,6 +273,7 @@ function currentStopReason(): string | undefined {
 
 async function stopHarness(stopReason: string): Promise<void> {
   requestedStopReason = stopReason;
+  stopActiveSession();
   runTrace = await updateRunTraceMetadata(runTrace, { stopReason });
   try {
     const improvement = await improveLatestTrace({ runId: runTrace.runId });
@@ -275,6 +289,18 @@ async function stopHarness(stopReason: string): Promise<void> {
   }
   console.dir({ runId: runTrace.runId, stopReason, type: "harness-stop" });
   await closeMetricsServer();
+}
+
+function stopActiveSession(): void {
+  try {
+    session.interrupt();
+    session.kill();
+  } catch (error) {
+    console.dir({
+      message: error instanceof Error ? error.message : String(error),
+      type: "session-stop-error",
+    });
+  }
 }
 
 async function closeMetricsServer(): Promise<void> {
@@ -440,6 +466,18 @@ async function executeDeterministicButtonAction({
   runMetricsTracker.recordVerification(
     verification.success ? "success" : "failure"
   );
+  if (
+    !verification.success &&
+    expectedOutcome === "movement-or-map-change" &&
+    action.toolName === "mgba_hold"
+  ) {
+    stuckMemory.recordVerifiedMovementFailure({
+      action: `hold:${action.button}`,
+      observation: before,
+      turn: turnsRun,
+    });
+    runMetricsTracker.recordStuckEvents(stuckMemory.snapshot().stuckEvents);
+  }
   await sharedStrategyMemory.recordActionSuccess({
     action,
     before,
@@ -601,15 +639,21 @@ function verifyDeterministicOutcome({
     };
   }
   const progressed =
-    before.status.frame !== after.status.frame ||
     beforeState.dialogueLike !== afterState.dialogueLike ||
     beforeState.menuLike !== afterState.menuLike ||
-    beforeState.mapId !== afterState.mapId;
+    beforeState.battle !== afterState.battle ||
+    beforeState.mapId !== afterState.mapId ||
+    beforeState.position.x !== afterState.position.x ||
+    beforeState.position.y !== afterState.position.y;
+  const confirmedUiAdvanced =
+    (beforeState.dialogueLike === true || beforeState.menuLike === true) &&
+    before.status.frame !== after.status.frame;
   return {
-    reason: progressed
-      ? "dialogue/menu/script frame or state changed"
-      : `no dialogue/script progress after ${action.toolName}:${action.button}`,
-    success: progressed,
+    reason:
+      progressed || confirmedUiAdvanced
+        ? "dialogue/menu/script RAM state changed or confirmed UI advanced"
+        : `no dialogue/script progress after ${action.toolName}:${action.button}`,
+    success: progressed || confirmedUiAdvanced,
   };
 }
 

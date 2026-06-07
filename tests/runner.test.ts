@@ -22,6 +22,7 @@ import type { SupervisorIntervention } from "../src/supervisor";
 import { createMgbaControlPlane } from "../src/tools";
 
 class FakeRun implements AgentRun {
+  returnCalls = 0;
   streamCalls = 0;
   readonly #events: AgentEvent[];
 
@@ -31,6 +32,7 @@ class FakeRun implements AgentRun {
 
   stream(): AsyncIterable<AgentEvent> {
     this.streamCalls += 1;
+    const self = this;
     const events = this.#events;
     return {
       [Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
@@ -42,6 +44,10 @@ class FakeRun implements AgentRun {
                 ? { done: false, value: events[index++] }
                 : { done: true, value: undefined }
             ),
+          return: () => {
+            self.returnCalls += 1;
+            return Promise.resolve({ done: true, value: undefined });
+          },
         };
       },
     };
@@ -411,6 +417,81 @@ describe("streamRun", () => {
     });
 
     expect(forwarded).toEqual(events);
+  });
+
+  it("can stop fallback streaming after one tool result", async () => {
+    const events: AgentEvent[] = [
+      { type: "turn-start" },
+      {
+        input: { button: "A" },
+        toolCallId: "call-1",
+        toolName: "mgba_tap",
+        type: "tool-call",
+      },
+      {
+        output: { ok: true },
+        toolCallId: "call-1",
+        toolName: "mgba_tap",
+        type: "tool-result",
+      },
+      {
+        input: { button: "B" },
+        toolCallId: "call-2",
+        toolName: "mgba_tap",
+        type: "tool-call",
+      },
+    ];
+    const forwarded: AgentEvent[] = [];
+    const limitReasons: string[] = [];
+    const run = new FakeRun(events);
+
+    await streamRun(
+      run,
+      (event) => {
+        forwarded.push(event);
+      },
+      {
+        maxToolResults: 1,
+        onLimit: (reason) => {
+          limitReasons.push(reason);
+        },
+      }
+    );
+
+    expect(forwarded).toEqual(events.slice(0, 3));
+    expect(limitReasons).toEqual(["max-tool-results"]);
+    expect(run.returnCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("can stop fallback streaming after one model step even without tool-result events", async () => {
+    const events: AgentEvent[] = [
+      { type: "turn-start" },
+      { type: "step-start", step: 1 },
+      { type: "assistant-text", text: "recovery action" },
+      { type: "step-end", step: 1 },
+      { type: "step-start", step: 2 },
+      { type: "assistant-text", text: "should not run" },
+    ] as AgentEvent[];
+    const forwarded: AgentEvent[] = [];
+    const limitReasons: string[] = [];
+    const run = new FakeRun(events);
+
+    await streamRun(
+      run,
+      (event) => {
+        forwarded.push(event);
+      },
+      {
+        maxSteps: 1,
+        onLimit: (reason) => {
+          limitReasons.push(reason);
+        },
+      }
+    );
+
+    expect(forwarded).toEqual(events.slice(0, 4));
+    expect(limitReasons).toEqual(["max-steps"]);
+    expect(run.returnCalls).toBeGreaterThanOrEqual(1);
   });
 });
 

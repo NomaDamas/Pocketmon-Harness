@@ -253,6 +253,32 @@ function chooseRedHouse2fBootstrapAction(
   state: PokemonStateObservation,
   stuckMemory: StuckMemorySnapshot
 ): AutopilotAction {
+  if (shouldEscapeLeftWallStairApproach(state, stuckMemory)) {
+    return holdAction(
+      "Right",
+      "Red house 2F bootstrap: escape the blocked left-wall stair approach before resuming the bedroom route."
+    );
+  }
+  if (
+    (state.position.x ?? 99) <= 3 &&
+    (state.position.y ?? 99) < 7 &&
+    !blockedAtCurrentPosition(state, "Down", stuckMemory)
+  ) {
+    return holdAction(
+      "Down",
+      "Red house 2F bootstrap: avoid the SNES/TV lane and move down toward the stair corner."
+    );
+  }
+  if (
+    (state.position.y ?? 0) >= 7 &&
+    (state.position.x ?? 99) < 7 &&
+    !blockedAtCurrentPosition(state, "Right", stuckMemory)
+  ) {
+    return holdAction(
+      "Right",
+      "Red house 2F bootstrap: cross right along the lower row toward the stair warp."
+    );
+  }
   if (
     blockedAtCurrentPosition(state, "Up", stuckMemory) &&
     !blockedAtCurrentPosition(state, "Right", stuckMemory)
@@ -293,10 +319,31 @@ function chooseRedHouse2fBootstrapAction(
   };
 }
 
+function shouldEscapeLeftWallStairApproach(
+  state: PokemonStateObservation,
+  stuckMemory: StuckMemorySnapshot
+): boolean {
+  return (
+    (state.position.x ?? 99) <= 0 &&
+    (state.position.y ?? 0) >= 4 &&
+    !blockedAtCurrentPosition(state, "Right", stuckMemory)
+  );
+}
+
 function chooseRedHouse1fBootstrapAction(
   state: PokemonStateObservation,
   stuckMemory: StuckMemorySnapshot
 ): AutopilotAction {
+  if (
+    (state.position.y ?? 99) <= 3 &&
+    (state.position.x ?? 99) > 3 &&
+    !blockedAtCurrentPosition(state, "Left", stuckMemory)
+  ) {
+    return holdAction(
+      "Left",
+      "Red house 1F bootstrap: align left on the upper floor row before descending toward the front door."
+    );
+  }
   if (
     (state.position.y ?? 0) < 6 &&
     !blockedAtCurrentPosition(state, "Down", stuckMemory)

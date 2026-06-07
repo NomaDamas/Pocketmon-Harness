@@ -17,6 +17,31 @@ export type MgbaButton = (typeof MGBA_BUTTONS)[number];
 export type MgbaHttpMethod = "GET" | "POST";
 
 const MGBA_TRANSIENT_RETRY_ATTEMPTS = 2;
+const DEFAULT_SYSTEM_RAM_DOMAIN = "System RAM";
+const MEMORY_DOMAIN_READ8_FALLBACKS = [
+  {
+    addressParam: "address",
+    domainParam: "domain",
+    path: "/memorydomain/read8",
+  },
+  {
+    addressParam: "address",
+    domainParam: "memoryDomain",
+    path: "/memorydomain/read8",
+  },
+  {
+    addressParam: "address",
+    domainParam: "domain",
+    path: "/memoryDomain/read8",
+  },
+  {
+    addressParam: "address",
+    domainParam: "memoryDomain",
+    path: "/memoryDomain/read8",
+  },
+] as const;
+const LEADING_SLASHES_RE = /^\/+/u;
+const MGBA_SUCCESS_SUFFIX_RE = /<\|SUCCESS\|>$/u;
 type HttpHeaders = Record<string, string>;
 
 export interface MgbaRequestOptions {
@@ -262,19 +287,49 @@ export class MgbaHttpClient {
     return this.request("/core/reset", { method: "POST", signal });
   }
 
-  read8(address: number, signal?: AbortSignal): Promise<number> {
-    return this.request("/core/read8", {
-      params: { address: `0x${address.toString(16).toUpperCase()}` },
-      signal,
-    }).then((body) => {
-      const value = Number.parseInt(body, 10);
-      if (!Number.isInteger(value) || value < 0 || value > 255) {
-        throw new Error(
-          `Invalid read8 response for address ${address}: ${body}`
-        );
+  async read8(address: number, signal?: AbortSignal): Promise<number> {
+    const hexAddress = formatHexAddress(address);
+    try {
+      const body = await this.request("/core/read8", {
+        params: { address: hexAddress },
+        signal,
+      });
+      return parseRead8Body(address, body);
+    } catch (coreError) {
+      const fallback = await this.read8FromMemoryDomain(address, signal).catch(
+        () => undefined
+      );
+      if (fallback !== undefined) {
+        return fallback;
       }
-      return value;
-    });
+      throw coreError;
+    }
+  }
+
+  async read8FromMemoryDomain(
+    address: number,
+    signal?: AbortSignal,
+    domain = DEFAULT_SYSTEM_RAM_DOMAIN
+  ): Promise<number> {
+    const hexAddress = formatHexAddress(address);
+    let lastError: unknown;
+    for (const fallback of MEMORY_DOMAIN_READ8_FALLBACKS) {
+      try {
+        const body = await this.request(fallback.path, {
+          params: {
+            [fallback.addressParam]: hexAddress,
+            [fallback.domainParam]: domain,
+          },
+          signal,
+        });
+        return parseRead8Body(address, body);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`Unable to read ${hexAddress} from memory domain ${domain}`);
   }
 
   screenshot(path: string, signal?: AbortSignal): Promise<string> {
@@ -360,7 +415,7 @@ export class MgbaHttpClient {
     if (!base.pathname.endsWith("/")) {
       base.pathname = `${base.pathname}/`;
     }
-    return new URL(path.replace(/^\/+/u, ""), base);
+    return new URL(path.replace(LEADING_SLASHES_RE, ""), base);
   }
 
   async runSequentialButtons(
@@ -413,6 +468,18 @@ function isMissingEndpointError(error: unknown): boolean {
   return error instanceof MgbaHttpError && error.status === 404;
 }
 
+function parseRead8Body(address: number, body: string): number {
+  const value = Number.parseInt(body, 10);
+  if (!Number.isInteger(value) || value < 0 || value > 255) {
+    throw new Error(`Invalid read8 response for address ${address}: ${body}`);
+  }
+  return value;
+}
+
+function formatHexAddress(address: number): string {
+  return `0x${address.toString(16).toUpperCase()}`;
+}
+
 function unwrapMgbaResponse(body: string): string {
   const trimmed = body.trim();
   if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) {
@@ -421,7 +488,7 @@ function unwrapMgbaResponse(body: string): string {
   try {
     const parsed = JSON.parse(trimmed) as { response?: unknown };
     if (typeof parsed.response === "string") {
-      return parsed.response.replace(/<\|SUCCESS\|>$/u, "");
+      return parsed.response.replace(MGBA_SUCCESS_SUFFIX_RE, "");
     }
   } catch {
     return trimmed;

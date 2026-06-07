@@ -1,6 +1,7 @@
 import { access, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "dotenv";
+import { MgbaHttpClient } from "./mgba-http";
 
 const DEFAULT_MGBA_BASE_URL = "http://127.0.0.1:5000";
 const DEFAULT_TRACE_ROOT = ".pss-mgba/traces";
@@ -47,6 +48,7 @@ export async function loadHarnessReadiness({
     Promise.resolve(modelConfigReadiness(env)),
     romReadiness(env),
     mgbaHttpReadiness(env, fetchImpl),
+    ramControllerReadiness(env, fetchImpl),
     traceObserverReadiness(traceRoot),
     Promise.resolve(viewerReadiness(env)),
     Promise.resolve(selfImprovementReadiness()),
@@ -167,6 +169,32 @@ async function mgbaHttpReadiness(
     return {
       detail: `${baseUrl} is not reachable; start mGBA + mGBA-http first`,
       label: "mGBA HTTP",
+      status: "blocked",
+    };
+  }
+}
+
+async function ramControllerReadiness(
+  env: NodeJS.ProcessEnv,
+  fetchImpl: typeof fetch
+): Promise<ReadinessItem> {
+  const baseUrl = env.MGBA_HTTP_BASE_URL || DEFAULT_MGBA_BASE_URL;
+  const client = new MgbaHttpClient({
+    authToken: env.MGBA_HTTP_AUTH_TOKEN,
+    baseUrl,
+    fetch: fetchImpl,
+  });
+  try {
+    const mapId = await client.read8(0xd3_5e, AbortSignal.timeout(1500));
+    return {
+      detail: `RAM read ready via core or memory-domain fallback; mapId=${mapId}`,
+      label: "RAM controller",
+      status: "ready",
+    };
+  } catch (error) {
+    return {
+      detail: `${baseUrl} cannot expose Pokemon RAM now; controller will stop on HARNESS_MAX_RAM_UNAVAILABLE_TURNS instead of spending LLM tokens (${error instanceof Error ? error.message : "unknown error"})`,
+      label: "RAM controller",
       status: "blocked",
     };
   }

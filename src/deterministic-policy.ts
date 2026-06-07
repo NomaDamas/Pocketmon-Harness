@@ -14,6 +14,8 @@ const OAK_LAB_MAP_ID = 40;
 const OAK_LAB_MAX_DETERMINISTIC_A = 10;
 const OAK_TRIGGER_MAX_DETERMINISTIC_A = 6;
 const INTRO_BOOTSTRAP_MAX_DETERMINISTIC_ACTIONS = 10;
+const GENERIC_STUCK_INTERACTION_MAX_A = 1;
+const GENERIC_STUCK_MOVEMENT_EDGE_THRESHOLD = 3;
 
 const KNOWN_STAGE1_MAP_IDS = new Set<number>([
   RED_HOUSE_1F_MAP_ID,
@@ -109,7 +111,12 @@ export function chooseDeterministicPolicyAction({
   }
 
   if (state.mapId === OAK_LAB_MAP_ID) {
-    const labDecision = chooseOakLabScriptAction(recentActions, detected);
+    const labDecision = chooseOakLabScriptAction(
+      state,
+      recentActions,
+      detected,
+      stuckMemory
+    );
     if (labDecision) {
       return labDecision;
     }
@@ -205,10 +212,47 @@ function chooseIntroBootstrapAction(
 }
 
 function chooseOakLabScriptAction(
+  state: NonNullable<MgbaObservation["state"]>,
   recentActions: readonly string[],
-  detected: ReturnType<typeof detectPokemonPhase>
+  detected: ReturnType<typeof detectPokemonPhase>,
+  stuckMemory: StuckMemorySnapshot
 ): DeterministicPolicyDecision | undefined {
   const repeatedA = recentTapCount(recentActions, "A");
+  if (
+    state.dialogueLike !== true &&
+    state.menuLike !== true &&
+    state.position.x !== null &&
+    state.position.y !== null
+  ) {
+    const routeAction = chooseOakLabWaypointAction(
+      state,
+      stuckMemory,
+      recentActions
+    );
+    if (routeAction) {
+      return {
+        action: routeAction,
+        expectedOutcome:
+          routeAction.toolName === "mgba_hold"
+            ? "movement-or-map-change"
+            : "dialogue-progress",
+        phase: detected.phase,
+        policy: "known-stage1-route",
+        reason:
+          "Oak Lab RAM position is available and no confirmed dialogue/menu is active; route to the next lab waypoint instead of spamming A.",
+        waypoint: detected.waypoint,
+      };
+    }
+    if (hasRecentTap(recentActions, "A")) {
+      return {
+        phase: detected.phase,
+        policy: "llm-fallback",
+        reason:
+          "Oak Lab waypoint movement and interaction both failed without RAM progress; fallback analyst must inspect the blocked script state.",
+        waypoint: detected.waypoint,
+      };
+    }
+  }
   if (repeatedA >= OAK_LAB_MAX_DETERMINISTIC_A) {
     return {
       phase: detected.phase,
@@ -230,6 +274,81 @@ function chooseOakLabScriptAction(
     reason:
       "Oak Lab mapId=40 is a known Stage 1 scripted segment; LLM should not drive one-step dialogue decisions",
     waypoint: detected.waypoint,
+  };
+}
+
+function chooseOakLabWaypointAction(
+  state: NonNullable<MgbaObservation["state"]>,
+  stuckMemory: StuckMemorySnapshot,
+  recentActions: readonly string[]
+): AutopilotAction | undefined {
+  const x = state.position.x;
+  const y = state.position.y;
+  if (x === null || y === null) {
+    return;
+  }
+  const targetX = 4;
+  const targetY = 2;
+  if (
+    x < targetX &&
+    !blockedAt(state, "Right", stuckMemory) &&
+    recentHoldCount(recentActions, "Right") < 3
+  ) {
+    return {
+      button: "Right",
+      duration: 10,
+      reason:
+        "OakLabRoutePolicy: align toward the center starter/Oak waypoint before interacting.",
+      toolName: "mgba_hold",
+    };
+  }
+  if (
+    x > targetX &&
+    !blockedAt(state, "Left", stuckMemory) &&
+    recentHoldCount(recentActions, "Left") < 3
+  ) {
+    return {
+      button: "Left",
+      duration: 10,
+      reason:
+        "OakLabRoutePolicy: align toward the center starter/Oak waypoint before interacting.",
+      toolName: "mgba_hold",
+    };
+  }
+  if (
+    y > targetY &&
+    !blockedAt(state, "Up", stuckMemory) &&
+    recentHoldCount(recentActions, "Up") < 3
+  ) {
+    return {
+      button: "Up",
+      duration: 10,
+      reason:
+        "OakLabRoutePolicy: walk north to the starter/Oak interaction waypoint before pressing A.",
+      toolName: "mgba_hold",
+    };
+  }
+  if (
+    y < targetY &&
+    !blockedAt(state, "Down", stuckMemory) &&
+    recentHoldCount(recentActions, "Down") < 3
+  ) {
+    return {
+      button: "Down",
+      duration: 10,
+      reason:
+        "OakLabRoutePolicy: re-align south to the starter/Oak interaction waypoint before pressing A.",
+      toolName: "mgba_hold",
+    };
+  }
+  if (hasRecentTap(recentActions, "A")) {
+    return;
+  }
+  return {
+    button: "A",
+    reason:
+      "OakLabRoutePolicy: at the lab waypoint; interact once with the starter/Oak script.",
+    toolName: "mgba_tap",
   };
 }
 
@@ -259,6 +378,12 @@ function chooseKnownStage1Action({
         recentActions,
         state,
         stuckMemory,
+      }) ??
+      chooseGenericStuckInteractionAction({
+        detected,
+        recentActions,
+        state,
+        stuckMemory,
       }) ?? {
         policy: "llm-fallback",
         phase: detected.phase,
@@ -277,6 +402,46 @@ function chooseKnownStage1Action({
     phase: detected.phase,
     policy: "known-stage1-route",
     reason: `known Stage 1 mapId=${state.mapId}; deterministic controller has authority`,
+    waypoint: detected.waypoint,
+  };
+}
+
+function chooseGenericStuckInteractionAction({
+  detected,
+  recentActions,
+  state,
+  stuckMemory,
+}: {
+  detected: ReturnType<typeof detectPokemonPhase>;
+  recentActions: readonly string[];
+  state: NonNullable<MgbaObservation["state"]>;
+  stuckMemory: StuckMemorySnapshot;
+}): DeterministicPolicyDecision | undefined {
+  if (failedMovementEdgeCountAt(state, stuckMemory) < 3) {
+    return;
+  }
+  const repeatedA = recentTapCount(recentActions, "A");
+  if (repeatedA >= GENERIC_STUCK_INTERACTION_MAX_A) {
+    return {
+      phase: detected.phase,
+      policy: "llm-fallback",
+      reason:
+        "generic stuck interaction recovery already tried A without verified progress; fallback analyst must inspect",
+      waypoint: detected.waypoint,
+    };
+  }
+  return {
+    action: {
+      button: "A",
+      reason:
+        "GenericStuckInteractionPolicy: multiple movement edges failed at the same RAM state; interact once before handing control to LLM.",
+      toolName: "mgba_tap",
+    },
+    expectedOutcome: "dialogue-progress",
+    phase: detected.phase,
+    policy: "dialogue",
+    reason:
+      "same-state movement exhausted; deterministic controller tests one interaction before fallback",
     waypoint: detected.waypoint,
   };
 }
@@ -361,6 +526,19 @@ function blockedAt(
   );
 }
 
+function failedMovementEdgeCountAt(
+  state: NonNullable<MgbaObservation["state"]>,
+  stuckMemory: StuckMemorySnapshot
+): number {
+  return stuckMemory.failedMovementEdges.filter(
+    (edge) =>
+      edge.attempts >= GENERIC_STUCK_MOVEMENT_EDGE_THRESHOLD &&
+      edge.context.includes(`map=${state.mapId}`) &&
+      edge.context.includes(`x=${state.position.x}`) &&
+      edge.context.includes(`y=${state.position.y}`)
+  ).length;
+}
+
 function recentTapCount(
   recentActions: readonly string[],
   button: string
@@ -376,8 +554,22 @@ function recentTapCount(
   return count;
 }
 
-function hasRecentTap(recentActions: readonly string[], button: string): boolean {
+function recentHoldCount(
+  recentActions: readonly string[],
+  button: string
+): number {
+  return recentActions.filter(
+    (action) =>
+      action.includes("hold") && action.includes(`"button":"${button}"`)
+  ).length;
+}
+
+function hasRecentTap(
+  recentActions: readonly string[],
+  button: string
+): boolean {
   return recentActions.some(
-    (action) => action.includes("tap") && action.includes(`"button":"${button}"`)
+    (action) =>
+      action.includes("tap") && action.includes(`"button":"${button}"`)
   );
 }

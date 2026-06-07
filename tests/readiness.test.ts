@@ -34,6 +34,12 @@ describe("harness readiness", () => {
         status: "ready",
       })
     );
+    expect(readiness.items).toContainEqual(
+      expect.objectContaining({
+        label: "RAM controller",
+        status: "ready",
+      })
+    );
     expect(formatHarnessReadiness(readiness)).toContain(
       "Pokemon Harness Readiness"
     );
@@ -61,6 +67,12 @@ describe("harness readiness", () => {
     expect(readiness.items).toContainEqual(
       expect.objectContaining({
         label: "mGBA HTTP",
+        status: "blocked",
+      })
+    );
+    expect(readiness.items).toContainEqual(
+      expect.objectContaining({
+        label: "RAM controller",
         status: "blocked",
       })
     );

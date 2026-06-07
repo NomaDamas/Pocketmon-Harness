@@ -45,23 +45,66 @@ export function createContinuationPrompt(turn: number): string {
 
 export async function streamRun(
   run: AgentRun,
-  onEvent: (event: AgentEvent) => void = console.dir
+  onEvent: (event: AgentEvent) => void = console.dir,
+  {
+    maxSteps,
+    maxToolResults,
+    onLimit,
+  }: {
+    maxSteps?: number;
+    maxToolResults?: number;
+    onLimit?: (reason: "max-steps" | "max-tool-results") => void;
+  } = {}
 ): Promise<void> {
-  for await (const event of run.stream()) {
-    onEvent(event);
+  let steps = 0;
+  let toolResults = 0;
+  const iterator = run.stream()[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) {
+        return;
+      }
+      const event = next.value;
+      onEvent(event);
+      if (event.type === "step-end") {
+        steps += 1;
+        if (maxSteps !== undefined && steps >= maxSteps) {
+          onLimit?.("max-steps");
+          await iterator.return?.();
+          return;
+        }
+      }
+      if (event.type === "tool-result") {
+        toolResults += 1;
+        if (maxToolResults !== undefined && toolResults >= maxToolResults) {
+          onLimit?.("max-tool-results");
+          await iterator.return?.();
+          return;
+        }
+      }
+    }
+  } finally {
+    await iterator.return?.();
   }
 }
 
 export async function streamSupervisedRun({
   client,
+  maxSteps,
+  maxToolResults,
+  onLimit,
   onEvent = console.dir,
   run,
 }: {
   client: MgbaHttpClient;
+  maxSteps?: number;
+  maxToolResults?: number;
+  onLimit?: (reason: "max-steps" | "max-tool-results") => void;
   onEvent?: (event: RunnerEvent) => void;
   run: AgentRun;
 }): Promise<void> {
-  await streamRun(run, onEvent);
+  await streamRun(run, onEvent, { maxSteps, maxToolResults, onLimit });
   await waitThroughBlackFrames({
     client,
     onIntervention: (intervention) =>

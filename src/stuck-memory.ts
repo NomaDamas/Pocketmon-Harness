@@ -136,6 +136,38 @@ export class StuckMemory {
     };
   }
 
+  recordVerifiedMovementFailure({
+    action,
+    observation,
+    turn,
+  }: {
+    action: string;
+    observation: MgbaObservation;
+    turn: number;
+  }): void {
+    const context = movementContextFromObservation(observation);
+    if (!context) {
+      return;
+    }
+    const key = `${context.label}|${action}`;
+    const attempts =
+      (this.#failedMovementEdges.get(key)?.attempts ??
+        (this.#lastFailedKey === key
+          ? this.#repeatedFailedMovementAttempts
+          : 0)) + 1;
+    this.#lastFailedKey = key;
+    this.#repeatedFailedMovementAttempts = attempts;
+    if (attempts === STUCK_THRESHOLD) {
+      this.#stuckEvents += 1;
+    }
+    this.#recordFailedEdge({
+      action,
+      attempts,
+      context: context.label,
+      lastSeenTurn: turn,
+    });
+  }
+
   snapshot(): StuckMemorySnapshot {
     return {
       failedMovementEdges: [...this.#failedMovementEdges.values()],

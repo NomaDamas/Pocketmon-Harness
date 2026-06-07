@@ -38,6 +38,27 @@ describe("planStage1Path", () => {
     });
   });
 
+  it("aligns horizontally after exiting Red's house before walking north", () => {
+    const plan = planStage1Path({
+      state: {
+        ...route1State,
+        mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
+        position: { x: 2, y: 7 },
+      },
+    });
+
+    expect(plan).toMatchObject({
+      action: "Right",
+      nextWaypoint: {
+        position: {
+          mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
+          x: 10,
+          y: 0,
+        },
+      },
+    });
+  });
+
   it("uses Dijkstra route planning toward Viridian City on Route 1", () => {
     const plan = planStage1Path({ state: route1State });
 

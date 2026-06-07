@@ -113,6 +113,44 @@ describe("MgbaHttpClient", () => {
     );
   });
 
+  it("falls back to System RAM memory domain when core read8 is unavailable", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = input instanceof URL ? input : new URL(String(input));
+      if (url.pathname.endsWith("/core/read8")) {
+        return textResponse(
+          JSON.stringify({
+            response: "error:system RAM is unavailable<|SUCCESS|>",
+          }),
+          { headers: { "content-type": "application/json" } }
+        );
+      }
+      return textResponse(
+        JSON.stringify({
+          response: "37<|SUCCESS|>",
+        }),
+        { headers: { "content-type": "application/json" } }
+      );
+    });
+    const client = new MgbaHttpClient({
+      authToken: "session-token",
+      baseUrl: "http://127.0.0.1:8787/api/sessions/session-a",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(client.read8(0xd3_5e)).resolves.toBe(37);
+
+    const [fallbackUrl, fallbackInit] = fetchMock.mock.calls[1] as unknown as [
+      URL,
+      RequestInit,
+    ];
+    expect(fallbackUrl.toString()).toBe(
+      "http://127.0.0.1:8787/api/sessions/session-a/memorydomain/read8?address=0xD35E&domain=System+RAM"
+    );
+    expect(new Headers(fallbackInit.headers).get("Authorization")).toBe(
+      "Bearer session-token"
+    );
+  });
+
   it("preserves mgba-server session base paths for core endpoints", async () => {
     const fetchMock = vi.fn(async () =>
       textResponse(
@@ -138,10 +176,11 @@ describe("MgbaHttpClient", () => {
 
   it("writes mgba-server PNG screenshot responses to the requested path", async () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    const fetchMock = vi.fn(async () =>
-      new Response(png, {
-        headers: { "content-type": "image/png" },
-      })
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(png, {
+          headers: { "content-type": "image/png" },
+        })
     );
     const client = new MgbaHttpClient({
       baseUrl: "http://127.0.0.1:8787/api/sessions/session-a",

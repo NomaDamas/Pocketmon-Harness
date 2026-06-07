@@ -253,6 +253,9 @@ function actionTowardWaypoint(
   if (current.mapId !== waypoint.mapId) {
     return current.mapId === POKEMON_RED_STAGE1_MAP_IDS.route1 ? "Up" : "Up";
   }
+  if (current.mapId === POKEMON_RED_STAGE1_MAP_IDS.palletTown) {
+    return actionTowardPalletWaypoint(current, waypoint);
+  }
   if (current.y > waypoint.y) {
     return "Up";
   }
@@ -264,6 +267,25 @@ function actionTowardWaypoint(
   }
   if (current.x > waypoint.x) {
     return "Left";
+  }
+  return "Up";
+}
+
+function actionTowardPalletWaypoint(
+  current: PlannerPosition,
+  waypoint: PlannerPosition
+): Stage1PathfinderAction {
+  if (current.x < waypoint.x) {
+    return "Right";
+  }
+  if (current.x > waypoint.x) {
+    return "Left";
+  }
+  if (current.y > waypoint.y) {
+    return "Up";
+  }
+  if (current.y < waypoint.y) {
+    return "Down";
   }
   return "Up";
 }
