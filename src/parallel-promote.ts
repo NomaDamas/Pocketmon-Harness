@@ -111,6 +111,7 @@ export async function promoteParallelProposal(
     runs: proposal.runs,
     source: "parallel-improvement",
     status: "promoted",
+    strategyTree: proposal.strategyTree,
   };
   await mkdir(dirname(activeHierarchyPath), { recursive: true });
   await writeFile(

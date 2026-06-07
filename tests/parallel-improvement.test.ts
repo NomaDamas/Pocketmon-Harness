@@ -45,9 +45,26 @@ describe("parallel improvement pipeline", () => {
       bestRunId: "run-a",
       runCount: 2,
     });
+    expect(result.proposal.strategyTree.root.children[0]?.children).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "hypothesis-branch",
+          status: "promising",
+          title: "pathfinder-first",
+        }),
+        expect.objectContaining({
+          kind: "hypothesis-branch",
+          status: "pruned",
+          title: "dialogue-recovery",
+        }),
+      ])
+    );
     await expect(
       readFile(join(candidatesDir, "batch-a", "proposal.json"), "utf8")
     ).resolves.toContain('"bestRunId": "run-a"');
+    await expect(
+      readFile(join(candidatesDir, "batch-a", "strategy-tree.json"), "utf8")
+    ).resolves.toContain('"kind": "global-guidebook"');
   });
 
   it("keeps promote explicit and blocked from mutating active hierarchy", async () => {
@@ -131,7 +148,7 @@ describe("parallel improvement pipeline", () => {
     });
     await expect(
       readFile(applied.activeHierarchyPath ?? "", "utf8")
-    ).resolves.toContain('"status": "promoted"');
+    ).resolves.toContain('"strategyTree"');
     await expect(readFile(strategyBookPath, "utf8")).resolves.toContain(
       '"promoted": true'
     );

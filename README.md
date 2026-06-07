@@ -129,6 +129,7 @@ needed for the current phase.
 | 🛠️ Skill Library | Runtime | Rule/waypoint to executable skill/action mapping |
 | 🔁 Trace / Failure Memory | Runtime | No-progress states, repeated failed actions, stuck edges, verification failures |
 | 🌳 Shared Strategy Memory | Runtime | Peer-proven subgoal actions shared within a parallel batch |
+| 🌲 Strategy Tree Memory | Proposal | Global -> stage -> hypothesis -> run-attempt hierarchy with pruning/backtracking status |
 | 🧪 Candidate / Promotion Memory | Proposal | QA-gated rule/skill/pathfinder patch proposals |
 | 📚 Manual / Roadmap Memory | Reference | Full-game roadmap, guide structure, and staged expansion boundaries |
 
@@ -150,7 +151,7 @@ checked quickly.
 | 📖 Rule/skill/manual memory | `src/stage1-memory.ts`, `src/stage1-active-rules.ts`, `src/stage1-active-skills.ts`, `src/stage1-active-route-knowledge.ts` |
 | ✅ Verification and stop control | `src/observation-bookkeeping.ts`, `src/stuck-memory.ts`, `src/stop-controller.ts`, `src/run-metrics.ts`, `src/token-usage.ts` |
 | 🧪 Self-improvement | `src/self-improvement.ts`, `src/self-improvement-watch.ts`, `src/improvement-hints.ts`, `src/strategy-book.ts` |
-| 🧵 Parallel evidence | `src/parallel-runner.ts`, `src/parallel-improvement.ts`, `src/parallel-promote.ts`, `src/shared-strategy.ts` |
+| 🧵 Parallel evidence | `src/parallel-runner.ts`, `src/parallel-improvement.ts`, `src/parallel-promote.ts`, `src/shared-strategy.ts`, `src/strategy-tree.ts` |
 | 📊 Observability | `src/tui.ts`, `src/tui-summary.ts`, `src/viewer-server.ts`, `src/viewer-events.ts`, `src/metrics-server.ts` |
 | 🐍 Formal process evidence | `docs/ouroboros-formal-process.md`, `docs/ouroboros-formal-evaluate-result.md`, `docs/ouroboros-formal-ralph-result.md` |
 
@@ -499,6 +500,32 @@ This means a sibling harness can immediately imitate a proven subgoal action
 through shared strategy memory, but durable guidebook updates still require
 proposal and promotion. That boundary prevents reward hacking where a bad run
 rewrites the guidebook just because it generated a confident explanation.
+
+🌲 Guidebook tree model:
+
+```text
+Pokemon Red Global Guidebook
+  -> Stage Guidebook
+    -> Hypothesis Branch
+      -> Run Attempt
+```
+
+Each parallel agent instance is treated as a run attempt inside a hypothesis
+branch. The batch evaluator scores branches by milestone progress, map
+transitions, verification success, stuck events, fallback rate, and token use.
+Promising branches remain proposal candidates; branches with repeated stuck
+events, verification failures, no progress, or poor score gaps are marked
+`pruned`. This is the backtracking mechanism: bad methods are not deleted from
+evidence, but they are cut off from promotion unless later runs produce stronger
+proof.
+
+`pnpm improve:parallel -- --batch <batch-id>` writes:
+
+- `.pss-mgba/candidates/<batch-id>/strategy-tree.json`
+- `.pss-mgba/candidates/<batch-id>/proposal.json`
+- `.pss-mgba/candidates/<batch-id>/rules.json`
+- `.pss-mgba/candidates/<batch-id>/skills.json`
+- `.pss-mgba/candidates/<batch-id>/pathfinder-patches.json`
 
 📊 Watch progress while the loop runs:
 

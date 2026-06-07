@@ -2,9 +2,12 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_RUNS_DIR } from "./run-summary";
 import type { RunTrace } from "./run-trace";
+import { buildStrategyTree, type StrategyTree } from "./strategy-tree";
 import type { ViewerEvent } from "./viewer-events";
 
 const DEFAULT_CANDIDATES_DIR = ".pss-mgba/candidates";
+const VERIFICATION_FAILURE_PATTERN = /verification_result success="false"/u;
+const VERIFICATION_SUCCESS_PATTERN = /verification_result success="true"/u;
 const MILESTONE_SCORE: Record<string, number> = {
   "player-control-reached": 10,
   "first-map-transition": 20,
@@ -43,6 +46,7 @@ export interface ParallelBatchProposal {
     skills: unknown[];
   };
   runs: ParallelBatchRunScore[];
+  strategyTree: StrategyTree;
   summary: {
     bestRunId?: string;
     runCount: number;
@@ -66,10 +70,16 @@ export async function improveParallelBatch({
   candidatesDir?: string;
   now?: Date;
   runsDir?: string;
-} = {}): Promise<{ batchId: string; outputDir: string; proposal: ParallelBatchProposal }> {
+} = {}): Promise<{
+  batchId: string;
+  outputDir: string;
+  proposal: ParallelBatchProposal;
+}> {
   const runs = await readBatchRuns(runsDir, batchId);
   const resolvedBatchId = batchId ?? inferLatestBatchId(runs);
-  const selectedRuns = runs.filter((run) => run.parallelBatchId === resolvedBatchId);
+  const selectedRuns = runs.filter(
+    (run) => run.parallelBatchId === resolvedBatchId
+  );
   if (selectedRuns.length === 0) {
     throw new Error(`No parallel runs found for batch ${resolvedBatchId}`);
   }
@@ -81,13 +91,26 @@ export async function improveParallelBatch({
   await mkdir(outputDir, { recursive: true });
   await Promise.all([
     writeFile(join(outputDir, "summary.md"), renderSummary(proposal)),
-    writeFile(join(outputDir, "rules.json"), `${JSON.stringify(proposal.recommendations.rules, null, 2)}\n`),
-    writeFile(join(outputDir, "skills.json"), `${JSON.stringify(proposal.recommendations.skills, null, 2)}\n`),
+    writeFile(
+      join(outputDir, "rules.json"),
+      `${JSON.stringify(proposal.recommendations.rules, null, 2)}\n`
+    ),
+    writeFile(
+      join(outputDir, "skills.json"),
+      `${JSON.stringify(proposal.recommendations.skills, null, 2)}\n`
+    ),
     writeFile(
       join(outputDir, "pathfinder-patches.json"),
       `${JSON.stringify(proposal.recommendations.pathfinderPatches, null, 2)}\n`
     ),
-    writeFile(join(outputDir, "proposal.json"), `${JSON.stringify(proposal, null, 2)}\n`),
+    writeFile(
+      join(outputDir, "strategy-tree.json"),
+      `${JSON.stringify(proposal.strategyTree, null, 2)}\n`
+    ),
+    writeFile(
+      join(outputDir, "proposal.json"),
+      `${JSON.stringify(proposal, null, 2)}\n`
+    ),
   ]);
   return { batchId: resolvedBatchId, outputDir, proposal };
 }
@@ -139,8 +162,8 @@ async function scoreRun(
   const transitions = countMapTransitions(
     states.map((state) => state?.mapId ?? null)
   );
-  const verificationSuccesses = countText(events, /verification_result success="true"/u);
-  const verificationFailures = countText(events, /verification_result success="false"/u);
+  const verificationSuccesses = countText(events, VERIFICATION_SUCCESS_PATTERN);
+  const verificationFailures = countText(events, VERIFICATION_FAILURE_PATTERN);
   const deterministicActions = events.filter(
     (event) =>
       event.type === "agent-event" &&
@@ -242,6 +265,11 @@ function createProposal(
         : [],
     },
     runs: [...runs],
+    strategyTree: buildStrategyTree({
+      batchId,
+      createdAt: now.toISOString(),
+      runs,
+    }),
     summary: {
       bestRunId: best?.runId,
       runCount: runs.length,
@@ -253,9 +281,10 @@ async function readEvents(
   runsDir: string,
   runId: string
 ): Promise<ViewerEvent[]> {
-  const raw = await readFile(join(runsDir, runId, "events.jsonl"), "utf8").catch(
-    () => ""
-  );
+  const raw = await readFile(
+    join(runsDir, runId, "events.jsonl"),
+    "utf8"
+  ).catch(() => "");
   return raw
     .trim()
     .split("\n")
@@ -263,15 +292,25 @@ async function readEvents(
     .map((line) => JSON.parse(line) as ViewerEvent);
 }
 
-async function readTotalTokens(runsDir: string, runId: string): Promise<number> {
-  const raw = await readFile(join(runsDir, runId, "token-usage.jsonl"), "utf8").catch(
-    () => ""
-  );
+async function readTotalTokens(
+  runsDir: string,
+  runId: string
+): Promise<number> {
+  const raw = await readFile(
+    join(runsDir, runId, "token-usage.jsonl"),
+    "utf8"
+  ).catch(() => "");
   return raw
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { type?: string; usage?: { totalTokens?: number } })
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          type?: string;
+          usage?: { totalTokens?: number };
+        }
+    )
     .filter((record) => record.type === "turn-summary")
     .reduce((sum, record) => sum + (record.usage?.totalTokens ?? 0), 0);
 }
