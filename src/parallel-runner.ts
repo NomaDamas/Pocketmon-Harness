@@ -25,6 +25,8 @@ const DEFAULT_HYPOTHESES = [
   "exploration-backtracking",
   "battle-safe-progress",
 ];
+const DEFAULT_PARALLEL_RAM_UNAVAILABLE_TURNS = "1";
+const TRAILING_SLASH_RE = /\/$/u;
 
 if (isMainModule()) {
   const plan = await createReachableParallelHarnessPlan({
@@ -62,7 +64,7 @@ function parseParallelEndpoint(raw: string): ParallelEndpoint {
   const url = new URL(baseUrl);
   return {
     authToken: authToken || undefined,
-    baseUrl: url.toString().replace(/\/$/u, ""),
+    baseUrl: url.toString().replace(TRAILING_SLASH_RE, ""),
     label: `${url.host}${url.pathname}`,
     port: url.port || (url.protocol === "https:" ? "443" : "80"),
   };
@@ -84,12 +86,14 @@ export function createParallelHarnessPlan({
   const resolvedEndpoints =
     endpoints && endpoints.length > 0
       ? endpoints
-      : ports.map((port): ParallelEndpoint => ({
-          authToken: undefined,
-          baseUrl: `http://127.0.0.1:${port}`,
-          label: port,
-          port,
-        }));
+      : ports.map(
+          (port): ParallelEndpoint => ({
+            authToken: undefined,
+            baseUrl: `http://127.0.0.1:${port}`,
+            label: port,
+            port,
+          })
+        );
 
   if (resolvedEndpoints.length < 2) {
     throw new Error(
@@ -108,6 +112,9 @@ export function createParallelHarnessPlan({
         env: {
           EXPERIMENT_HYPOTHESIS: hypothesis,
           EXPERIMENT_ID: `${batchId}:parallel-${index + 1}:${hypothesis}`,
+          HARNESS_MAX_RAM_UNAVAILABLE_TURNS:
+            process.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS ??
+            DEFAULT_PARALLEL_RAM_UNAVAILABLE_TURNS,
           MGBA_HTTP_BASE_URL: endpoint.baseUrl,
           METRICS_HTTP_PORT: String(9464 + index),
           PARALLEL_BATCH_ID: batchId,
@@ -142,12 +149,14 @@ export async function createReachableParallelHarnessPlan({
   const candidates =
     endpoints && endpoints.length > 0
       ? endpoints
-      : ports.map((port): ParallelEndpoint => ({
-          authToken: undefined,
-          baseUrl: `http://127.0.0.1:${port}`,
-          label: port,
-          port,
-        }));
+      : ports.map(
+          (port): ParallelEndpoint => ({
+            authToken: undefined,
+            baseUrl: `http://127.0.0.1:${port}`,
+            label: port,
+            port,
+          })
+        );
   const reachableEndpoints: ParallelEndpoint[] = [];
   const skippedLabels: string[] = [];
   for (const endpoint of candidates) {
@@ -217,21 +226,6 @@ function startInstance(instance: ParallelHarnessInstance): ChildProcess {
     `[${instance.label}] started ${instance.command} ${DEFAULT_ARGS.join(" ")} on ${instance.env.MGBA_HTTP_BASE_URL} hypothesis=${instance.hypothesis}\n`
   );
   return child;
-}
-
-async function isMgbaHttpReachable(
-  port: string,
-  fetchImpl: typeof fetch
-): Promise<boolean> {
-  return isMgbaEndpointReachable(
-    {
-      authToken: undefined,
-      baseUrl: `http://127.0.0.1:${port}`,
-      label: port,
-      port,
-    },
-    fetchImpl
-  );
 }
 
 async function isMgbaEndpointReachable(

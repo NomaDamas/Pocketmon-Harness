@@ -4,10 +4,12 @@ import { shouldStopHarness } from "../src/stop-controller";
 function state({
   controlToolCalls = 0,
   startedAtMs,
+  ramUnavailableFallbacks,
   totalTokens = 0,
   turnsRun = 0,
 }: {
   controlToolCalls?: number;
+  ramUnavailableFallbacks?: number;
   startedAtMs?: number;
   totalTokens?: number;
   turnsRun?: number;
@@ -17,6 +19,7 @@ function state({
       controlToolCalls,
       turnCount: turnsRun,
     },
+    ramUnavailableFallbacks,
     tokenUsage: {
       totalUsage: {
         totalTokens,
@@ -44,6 +47,15 @@ describe("shouldStopHarness", () => {
     expect(
       shouldStopHarness({ maxTokens: 200_000 }, state({ totalTokens: 200_000 }))
     ).toBe("max-tokens:200000");
+  });
+
+  it("stops when RAM unavailable fallback budget is reached", () => {
+    expect(
+      shouldStopHarness(
+        { maxRamUnavailableTurns: 1 },
+        state({ ramUnavailableFallbacks: 1 })
+      )
+    ).toBe("ram-unavailable-turns:1");
   });
 
   it("stops when max wall-clock minute budget is reached", () => {

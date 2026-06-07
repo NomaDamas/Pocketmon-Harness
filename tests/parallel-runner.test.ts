@@ -48,6 +48,7 @@ describe("parallel harness runner", () => {
         env: expect.objectContaining({
           EXPERIMENT_HYPOTHESIS: "pathfinder-first",
           EXPERIMENT_ID: "batch-test:parallel-1:pathfinder-first",
+          HARNESS_MAX_RAM_UNAVAILABLE_TURNS: "1",
           MGBA_HTTP_BASE_URL: "http://127.0.0.1:5001",
           PARALLEL_BATCH_ID: "batch-test",
           POKEMON_RUN_INSTANCE: "1",
@@ -59,6 +60,7 @@ describe("parallel harness runner", () => {
         env: expect.objectContaining({
           EXPERIMENT_HYPOTHESIS: "dialogue-recovery",
           EXPERIMENT_ID: "batch-test:parallel-2:dialogue-recovery",
+          HARNESS_MAX_RAM_UNAVAILABLE_TURNS: "1",
           MGBA_HTTP_BASE_URL: "http://127.0.0.1:5002",
           PARALLEL_BATCH_ID: "batch-test",
           POKEMON_RUN_INSTANCE: "2",
@@ -67,6 +69,29 @@ describe("parallel harness runner", () => {
         label: "pokemon-2:dialogue-recovery",
       }),
     ]);
+  });
+
+  it("preserves an explicit RAM-unavailable fallback budget override", () => {
+    const previous = process.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS;
+    process.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS = "3";
+    try {
+      const plan = createParallelHarnessPlan({
+        batchId: "batch-test",
+        ports: ["5001", "5002"],
+      });
+
+      expect(
+        plan.instances.map(
+          (instance) => instance.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS
+        )
+      ).toEqual(["3", "3"]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS;
+      } else {
+        process.env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS = previous;
+      }
+    }
   });
 
   it("preflights mGBA-http ports and skips offline slots", async () => {

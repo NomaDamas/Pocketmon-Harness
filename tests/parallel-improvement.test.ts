@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { improveParallelBatch } from "../src/parallel-improvement";
-import { inspectPromoteCandidate } from "../src/parallel-promote";
+import {
+  inspectPromoteCandidate,
+  promoteParallelProposal,
+} from "../src/parallel-promote";
 
 describe("parallel improvement pipeline", () => {
   it("groups runs by batch, scores hypotheses, and writes proposal files", async () => {
@@ -28,10 +31,7 @@ describe("parallel improvement pipeline", () => {
       runId: "run-b",
       runsDir,
       hypothesis: "dialogue-recovery",
-      events: [
-        observation(1, 38, 3, 6),
-        verification(false),
-      ],
+      events: [observation(1, 38, 3, 6), verification(false)],
     });
 
     const result = await improveParallelBatch({
@@ -65,6 +65,76 @@ describe("parallel improvement pipeline", () => {
       batchId: "batch-a",
       blocked: true,
     });
+  });
+
+  it("applies QA-eligible proposals only with explicit --apply semantics", async () => {
+    const root = await mkdtemp(join(tmpdir(), "parallel-promote-apply-"));
+    const candidatesDir = join(root, "candidates");
+    const activeHierarchyDir = join(root, "active-hierarchy");
+    const strategyBookPath = join(root, "strategy-book.json");
+    const runsDir = join(root, "runs");
+    await writeRun({
+      batchId: "batch-a",
+      events: [
+        observation(1, 38, 3, 6),
+        observation(1, 37, 4, 7),
+        verification(true),
+      ],
+      hypothesis: "pathfinder-first",
+      milestoneFurthest: "first-map-transition",
+      runId: "run-a",
+      runsDir,
+    });
+    await writeRun({
+      batchId: "batch-a",
+      events: [
+        observation(1, 38, 3, 6),
+        observation(1, 37, 4, 7),
+        verification(true),
+      ],
+      hypothesis: "exploration-backtracking",
+      milestoneFurthest: "first-map-transition",
+      runId: "run-b",
+      runsDir,
+    });
+    await improveParallelBatch({
+      batchId: "batch-a",
+      candidatesDir,
+      now: new Date("2026-06-06T00:00:00.000Z"),
+      runsDir,
+    });
+
+    await expect(
+      promoteParallelProposal("batch-a", {
+        activeHierarchyDir,
+        candidatesDir,
+        strategyBookPath,
+      })
+    ).resolves.toMatchObject({
+      applied: false,
+      blocked: true,
+      requiredNextStep:
+        "Run pnpm improve:promote -- --batch <batch-id> --apply after review.",
+    });
+
+    const applied = await promoteParallelProposal("batch-a", {
+      activeHierarchyDir,
+      apply: true,
+      candidatesDir,
+      strategyBookPath,
+    });
+
+    expect(applied).toMatchObject({
+      applied: true,
+      blocked: false,
+      strategyBookPath,
+    });
+    await expect(
+      readFile(applied.activeHierarchyPath ?? "", "utf8")
+    ).resolves.toContain('"status": "promoted"');
+    await expect(readFile(strategyBookPath, "utf8")).resolves.toContain(
+      '"promoted": true'
+    );
   });
 });
 

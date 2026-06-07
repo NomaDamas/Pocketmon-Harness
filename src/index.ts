@@ -77,6 +77,7 @@ const tokenUsageTracker = new TokenUsageTracker({
 });
 const harnessBudget = {
   maxMinutes: env.HARNESS_MAX_MINUTES,
+  maxRamUnavailableTurns: env.HARNESS_MAX_RAM_UNAVAILABLE_TURNS,
   maxSteps: env.HARNESS_MAX_STEPS,
   maxTokens: env.HARNESS_MAX_TOKENS,
   maxTurns: env.HARNESS_MAX_TURNS,
@@ -100,6 +101,7 @@ const observationBookkeeping = new ObservationBookkeeping({
 });
 let session: SessionHandle;
 let activeAiRuntimeConfig = aiRuntimeConfig;
+let ramUnavailableFallbacks = 0;
 let requestedStopReason: string | undefined;
 let turnsRun = 0;
 
@@ -178,6 +180,7 @@ async function createPokemonSession(config: {
 while (true) {
   const stopReason = shouldStopHarness(harnessBudget, {
     runMetrics: runMetricsTracker.snapshot(),
+    ramUnavailableFallbacks,
     startedAtMs: harnessStartedAtMs,
     tokenUsage: tokenUsageTracker.snapshot(),
     turnsRun,
@@ -190,9 +193,17 @@ while (true) {
   turnsRun += 1;
   observationBookkeeping.clearCurrentObservation();
 
-  if (await tryExecuteDeterministicPolicy()) {
-    await persistRunMetricsMetadata();
-    continue;
+  try {
+    if (await tryExecuteDeterministicPolicy()) {
+      await persistRunMetricsMetadata();
+      continue;
+    }
+  } catch (error) {
+    if (error instanceof HarnessStopError) {
+      await stopHarness(error.reason);
+      break;
+    }
+    throw error;
   }
 
   tokenUsageTracker.startTurn(turnsRun);
@@ -239,6 +250,7 @@ function currentStopReason(): string | undefined {
     requestedStopReason ??
     shouldStopHarness(harnessBudget, {
       runMetrics: runMetricsTracker.snapshot(),
+      ramUnavailableFallbacks,
       startedAtMs: harnessStartedAtMs,
       tokenUsage: tokenUsageTracker.snapshot(),
       turnsRun,
@@ -314,6 +326,11 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
     stuckMemory: stuckMemory.snapshot(),
   });
   if (!decision.action) {
+    if (observation.state?.readStatus === "unavailable") {
+      ramUnavailableFallbacks += 1;
+    } else {
+      ramUnavailableFallbacks = 0;
+    }
     runMetricsTracker.recordLlmFallback({
       phase: decision.phase,
       waypoint: decision.waypoint,
@@ -329,8 +346,13 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
       type: "llm-fallback-required",
       waypoint: decision.waypoint,
     });
+    const ramStopReason = currentStopReason();
+    if (ramStopReason?.startsWith("ram-unavailable-turns:")) {
+      throw new HarnessStopError(ramStopReason);
+    }
     return false;
   }
+  ramUnavailableFallbacks = 0;
 
   runMetricsTracker.recordControllerAction({
     phase: decision.phase,
@@ -367,7 +389,7 @@ async function executeDeterministicButtonAction({
   expectedOutcome?:
     | "battle-progress"
     | "dialogue-progress"
-      | "movement-or-map-change";
+    | "movement-or-map-change";
   id: string;
   phase: string;
   policy: string;

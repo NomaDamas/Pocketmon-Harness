@@ -96,6 +96,11 @@ export const env = createEnv({
     HARNESS_MAX_TOKENS: z.coerce.number().int().positive().optional(),
     HARNESS_MAX_TURNS: z.coerce.number().int().positive().optional(),
     HARNESS_MAX_MINUTES: z.coerce.number().positive().optional(),
+    HARNESS_MAX_RAM_UNAVAILABLE_TURNS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .optional(),
     METRICS_HTTP_HOST: z.string().min(1).default("0.0.0.0"),
     METRICS_HTTP_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   },

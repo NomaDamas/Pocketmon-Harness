@@ -235,6 +235,7 @@ HARNESS_MAX_STEPS=50
 HARNESS_MAX_TURNS=50
 HARNESS_MAX_TOKENS=200000
 HARNESS_MAX_MINUTES=5
+HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1
 ```
 
 When a limit is reached, the run exits gracefully and records the stop reason in
@@ -431,7 +432,7 @@ local env file and do not print them:
 set -a
 . .pss-mgba/mgba-server/parallel-endpoints.env
 set +a
-AI_PROVIDER=grok HARNESS_MAX_STEPS=50 pnpm parallel:run
+AI_PROVIDER=grok HARNESS_MAX_STEPS=50 HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1 pnpm parallel:run
 pnpm improve:parallel -- --batch <batch-id>
 ```
 
@@ -439,6 +440,12 @@ Each instance receives a separate `MGBA_HTTP_BASE_URL`, optional
 `MGBA_HTTP_AUTH_TOKEN`, `PARALLEL_BATCH_ID`, metrics port, and hypothesis label.
 This is real process orchestration, not replay simulation; every listed port or
 session URL must point to an independent emulator/session.
+
+If a headless/session endpoint cannot expose system RAM, the controller cannot
+trust `mapId/x/y` and should not spend tokens wandering. Keep
+`HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1` for those runs so the batch records
+`stopReason=ram-unavailable-turns:1`, writes evidence candidates, and exits
+cleanly instead of handing long-horizon play back to the LLM.
 
 ⚠️ Current parallel evidence boundary:
 
