@@ -2,7 +2,7 @@
   <img src="./assets/banner.png" alt="Which harness is the best Pokémon trainer?" width="100%" />
 </p>
 
-# 🎮 TypeScript Pokemon Harness
+# 🎮 minsingjin Pokemon Red Autonomous Harness
 
 Autonomous Pokemon gameplay harness for an already-running mGBA instance. The
 agent controls the emulator through `mGBA-http`, receives a fresh observed state
@@ -15,10 +15,10 @@ metrics all live here unless separate evidence proves a generic runtime need.
 
 ## 🧭 Mission
 
-Build a Pokemon Red autonomous-play harness that improves by evidence, not by
-guessing. The runner should read the current game state, select only the rules
-that apply now, execute a small skill/action, evaluate the trace, and feed
-verified improvement hints into later runs.
+Build a Pokemon Red autonomous-play harness that can eventually beat the whole
+game by evidence, not by guessing. The runner should read the current game
+state, select only the rules that apply now, execute a small skill/action,
+evaluate the trace, and feed verified improvement hints into later runs.
 
 ```text
 Rulebook memorization        ❌
@@ -31,9 +31,11 @@ Vague reflection             ❌
 Trace-backed candidate patch ✅
 ```
 
-The first hard objective is intentionally narrow: reach Viridian City in
-Pokemon Red from the early Pallet Town / Route 1 segment. Full-game completion
-is treated as staged expansion on top of this foundation.
+The final objective is `beat-pokemon-red`: clear the game through Victory Road,
+Elite Four, Champion, and credits. The currently active deterministic runtime
+slice is Stage 0/1 because those stages are where controller-primary execution,
+RAM verification, stuck memory, and self-improvement gates are already wired.
+Later stages are explicit roadmap targets, not vague future wishes.
 
 ## 🧱 Architecture At A Glance
 
@@ -74,6 +76,44 @@ is treated as staged expansion on top of this foundation.
 planner/fallback inside a stricter local loop. RAM, screenshots, rules,
 supervised controls, trace scoring, and candidate gates are first-class runtime
 objects.
+
+## 🏁 Full-Game Goal Hierarchy
+
+The project goal is bigger than Viridian City. Viridian is the first active
+proof slice, not the end state.
+
+| Stage | Status | Goal | Completion signal |
+| --- | --- | --- | --- |
+| 🎛️ Stage 0 | Active | Boot, intro, name/control recovery | Player can issue overworld inputs |
+| 🧭 Stage 1 | Active | Pallet Town -> Route 1 -> Viridian City | RAM reports Viridian City |
+| 📦 Stage 2 | Planned | Oak's Parcel and Pokedex | Pokedex obtained after delivery |
+| 🪨 Stage 3 | Planned | Viridian Forest and Brock | Boulder Badge obtained |
+| 🗺️ Stage 4 | Planned | Badges, HMs, dungeons, resources | Eight badges and required HM gates cleared |
+| 🏆 Stage 5 | Planned | Victory Road, Elite Four, Champion | Champion defeated and credits reachable |
+
+`src/pokemon-red-full-game-plan.ts` keeps this hierarchy in code so tests can
+guard against accidentally shrinking the objective back to Stage 1 only.
+
+## 🧠 Layered Memory Design
+
+The memory system is intentionally layered so the model reads only what is
+needed for the current phase.
+
+| Layer | Authority | Purpose |
+| --- | --- | --- |
+| 🎮 Control Memory | Runtime | Safe button tools, movement normalization, settle frames, reset boundary |
+| 🧭 Mode / Phase Memory | Runtime | Title, name, overworld, dialogue, battle, menu, unknown classification |
+| 🗺️ World / Route Memory | Runtime | Map ids, x/y waypoints, transitions, blocked edges, pathfinder authority |
+| 📖 Rule Memory | Runtime | Machine-readable rules selected by current state |
+| 🛠️ Skill Library | Runtime | Rule/waypoint to executable skill/action mapping |
+| 🔁 Trace / Failure Memory | Runtime | No-progress states, repeated failed actions, stuck edges, verification failures |
+| 🌳 Shared Strategy Memory | Runtime | Peer-proven subgoal actions shared within a parallel batch |
+| 🧪 Candidate / Promotion Memory | Proposal | QA-gated rule/skill/pathfinder patch proposals |
+| 📚 Manual / Roadmap Memory | Reference | Full-game roadmap, guide structure, and staged expansion boundaries |
+
+This is the core seed philosophy: the model does not memorize Pokemon Red. The
+harness owns structured memory and lets the model act only as a fallback analyst
+when deterministic controller authority is insufficient.
 
 ## ⚙️ Requirements
 
@@ -358,14 +398,17 @@ Observation(RAM + screenshot)
 - The model never receives reset/reload tools. Emulator lifecycle remains
   outside the model-facing control plane.
 
-🧭 Stage 1 route policy:
+🧭 Active controller slice:
 
-- The first hard objective is reaching Viridian City in Pokemon Red.
+- Stage 1 is the first active proof route toward the full `beat-pokemon-red`
+  objective.
 - RAM state is used for `mapId`, player coordinates, facing, and battle state.
 - Screenshots remain attached so the model can recover when RAM mode detection
   is ambiguous.
 - Dijkstra/backtracking route planning is used for the Pallet Town / Route 1
   path, and repeated failed edges are blocked after 3 attempts.
+- The next expansion target is Stage 2: Oak's Parcel, Pokedex receipt, and
+  verified return-route execution.
 
 Generate a QA-gated improvement candidate from the latest trace:
 
@@ -462,7 +505,7 @@ cleanly instead of handing long-horizon play back to the LLM.
 
 | User-planned method | Current implementation |
 | --- | --- |
-| 🎮 Pokemon Red only | Runtime state and Stage 1 rules are scoped to Pokemon Red RAM identity. |
+| 🎮 Pokemon Red full-game goal | `src/pokemon-red-full-game-plan.ts` defines the `beat-pokemon-red` hierarchy through Champion; active runtime is Stage 0/1. |
 | 📖 Rule Memory / Game Manual / Skill Library | `src/stage1-memory.ts`, active rules, active skills, route knowledge, and runtime Rule Memory Read injection. |
 | 🧠 Rule -> Skill -> Action loop | Each observation includes recommended rules, skill, and action before model fallback. |
 | 👀 RAM + vision observation | RAM parser reads map/x/y/facing/battle; screenshot pipeline crops and overlays movement grid. |
@@ -486,10 +529,13 @@ These are intentionally documented so the README does not overclaim:
   `mgba-server` worker sessions.
 - 🧪 Candidate patches are not automatically promoted into active rules; this is
   a safety boundary until QA gates are stronger.
-- 🗺️ The implemented route knowledge is Stage 1 only, not a full Pokemon Red
-  world graph.
+- 🗺️ The full-game objective is now represented in code, but the deterministic
+  runtime controller is currently active only for Stage 0/1 plus bounded
+  fallback recovery. Stage 2-5 route graphs must be promoted incrementally with
+  replay evidence.
 - 🥊 Battle policy is basic; full Gen 1 type matchups, team building, HM
-  planning, and Elite Four strategy remain staged future work.
+  planning, and Elite Four strategy are planned memory/controller layers, not
+  completed runtime authority yet.
 - 🐍 Ralph MCP execution cannot be started unless the Ouroboros MCP exposes
   `ouroboros_ralph` and related job tools in the active Codex session.
 
@@ -587,13 +633,19 @@ Only move work into the shared runtime package after multiple runs prove the
 same need outside this Pokemon/mGBA harness and the evidence names the affected
 runtime loop, session, event, budget, metric, store, or replay contract.
 
-## 👤 Contributor
+## 👤 Owner And Contributor
 
-- minsing-jin <ironman0722@naver.com>
+- minsingjin
+
+The source-of-truth owner/maintainer identity for this project is `minsingjin`.
+If this checkout still points to another GitHub namespace, transfer the GitHub
+repository to `minsingjin` or create a fresh `minsingjin/pocketmon-harness`
+repository and update `origin` locally.
 
 ### 🙏 Acknowledgements
 
-This project is maintained and developed by the contributor above. It builds on
-the Pokemon Red emulation ecosystem, including mGBA, mGBA-http-style emulator
-control, mgba-server-style parallel session ideas, and public Pokemon Red
-research/disassembly knowledge used as technical reference material.
+This project is maintained and developed by `minsingjin`. It uses the Pokemon
+Red emulation ecosystem, including mGBA-compatible control surfaces, parallel
+emulator session ideas, and public Pokemon Red research/disassembly knowledge as
+technical reference material. These are acknowledgements of tools and references,
+not additional project contributors.
