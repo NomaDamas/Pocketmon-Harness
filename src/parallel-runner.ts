@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { MgbaHttpClient } from "./mgba-http";
 
 export interface ParallelHarnessInstance {
   authToken?: string;
@@ -26,6 +27,7 @@ const DEFAULT_HYPOTHESES = [
   "battle-safe-progress",
 ];
 const DEFAULT_PARALLEL_RAM_UNAVAILABLE_TURNS = "1";
+const POKEMON_RED_MAP_ID_ADDRESS = 0xd3_5e;
 const TRAILING_SLASH_RE = /\/$/u;
 
 if (isMainModule()) {
@@ -139,12 +141,14 @@ export async function createReachableParallelHarnessPlan({
   fetchImpl = fetch,
   hypotheses = DEFAULT_HYPOTHESES,
   ports,
+  requireRam = process.env.POKEMON_PARALLEL_REQUIRE_RAM !== "0",
 }: {
   command?: string;
   endpoints?: readonly ParallelEndpoint[];
   fetchImpl?: typeof fetch;
   hypotheses?: readonly string[];
   ports: readonly string[];
+  requireRam?: boolean;
 }): Promise<ParallelHarnessPlan> {
   const candidates =
     endpoints && endpoints.length > 0
@@ -158,20 +162,23 @@ export async function createReachableParallelHarnessPlan({
           })
         );
   const reachableEndpoints: ParallelEndpoint[] = [];
-  const skippedLabels: string[] = [];
+  const skippedReasons: string[] = [];
   for (const endpoint of candidates) {
-    if (await isMgbaEndpointReachable(endpoint, fetchImpl)) {
+    const readiness = await probeParallelEndpoint(endpoint, fetchImpl, {
+      requireRam,
+    });
+    if (readiness.ok) {
       reachableEndpoints.push(endpoint);
     } else {
-      skippedLabels.push(endpoint.label);
+      skippedReasons.push(`${endpoint.label}:${readiness.reason}`);
       process.stderr.write(
-        `[parallel-runner] skipping offline mGBA endpoint ${endpoint.label}\n`
+        `[parallel-runner] skipping mGBA endpoint ${endpoint.label}: ${readiness.reason}\n`
       );
     }
   }
   if (reachableEndpoints.length < 2) {
     throw new Error(
-      `parallel gameplay requires at least two reachable independent mGBA-http ports; reachable=${reachableEndpoints.map((endpoint) => endpoint.label).join(",") || "none"} skipped=${skippedLabels.join(",") || "none"}`
+      `parallel gameplay requires at least two reachable independent RAM-capable mGBA endpoints for controller-primary runs; reachable=${reachableEndpoints.map((endpoint) => endpoint.label).join(",") || "none"} skipped=${skippedReasons.join(",") || "none"}`
     );
   }
   return createParallelHarnessPlan({
@@ -228,10 +235,20 @@ function startInstance(instance: ParallelHarnessInstance): ChildProcess {
   return child;
 }
 
-async function isMgbaEndpointReachable(
+interface ParallelEndpointProbeOptions {
+  requireRam: boolean;
+}
+
+interface ParallelEndpointProbeResult {
+  ok: boolean;
+  reason: string;
+}
+
+export async function probeParallelEndpoint(
   endpoint: ParallelEndpoint,
-  fetchImpl: typeof fetch
-): Promise<boolean> {
+  fetchImpl: typeof fetch,
+  { requireRam }: ParallelEndpointProbeOptions
+): Promise<ParallelEndpointProbeResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 750);
   try {
@@ -244,9 +261,31 @@ async function isMgbaEndpointReachable(
         : undefined,
       signal: controller.signal,
     });
-    return response.ok;
+    if (!response.ok) {
+      return { ok: false, reason: `frame-http-${response.status}` };
+    }
+
+    if (!requireRam) {
+      return { ok: true, reason: "frame-ready" };
+    }
+
+    try {
+      const client = new MgbaHttpClient({
+        authToken: endpoint.authToken,
+        baseUrl: endpoint.baseUrl,
+        fetch: fetchImpl,
+      });
+      await client.read8(POKEMON_RED_MAP_ID_ADDRESS, controller.signal);
+      return { ok: true, reason: "frame-and-ram-ready" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      return {
+        ok: false,
+        reason: `ram-unavailable:${message.replace(/\s+/gu, " ").slice(0, 120)}`,
+      };
+    }
   } catch {
-    return false;
+    return { ok: false, reason: "frame-unreachable" };
   } finally {
     clearTimeout(timeout);
   }

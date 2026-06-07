@@ -587,11 +587,35 @@ Each instance receives a separate `MGBA_HTTP_BASE_URL`, optional
 This is real process orchestration, not replay simulation; every listed port or
 session URL must point to an independent emulator/session.
 
+For controller-primary gameplay, a parallel endpoint must expose both:
+
+- `/core/currentframe` so the process can prove the emulator/session is alive.
+- Pokemon Red RAM reads through `/core/read8` or memory-domain fallback so the
+  controller can trust `mapId/x/y`.
+
+`pnpm parallel:run` enforces this by default. A frame-only endpoint is skipped
+before child harnesses are spawned because it would otherwise look visually
+alive while the deterministic controller has no state authority. Only set
+`POKEMON_PARALLEL_REQUIRE_RAM=0` for screenshot-only exploratory experiments;
+do not use it for serious controller-primary runs.
+
 If a headless/session endpoint cannot expose system RAM, the controller cannot
-trust `mapId/x/y` and should not spend tokens wandering. Keep
-`HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1` for those runs so the batch records
+trust `mapId/x/y` and should not spend tokens wandering. With the RAM preflight
+enabled, that endpoint is skipped. If RAM disappears after a run starts, keep
+`HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1` so the batch records
 `stopReason=ram-unavailable-turns:1`, writes evidence candidates, and exits
 cleanly instead of handing long-horizon play back to the LLM.
+
+Latest local boundary evidence:
+
+- Batch `batch-8a021bbb-72fb-4b9c-9957-246ef3171385` produced runs
+  `00083`, `00084`, and `00085` from visible `mgba-server` session URLs.
+- The web viewer lists all three under `http://127.0.0.1:9474`.
+- `improve:parallel` pruned every branch because the endpoints did not expose
+  Pokemon RAM to the controller: no progress milestone, no map transition, and
+  `stopReason=ram-unavailable-turns:1`.
+- This is the intended safety behavior: visible emulator/session is not enough;
+  the active harness must have RAM authority before claiming autonomous play.
 
 ⚠️ Current parallel evidence boundary:
 
@@ -630,7 +654,8 @@ only when it is attached to a closure path, evidence source, and promotion gate.
 
 | Gap | Current boundary | Closure path |
 | --- | --- | --- |
-| 🕹️ Visible parallel gameplay | Requires independent emulator endpoints: separate mGBA + Lua socket + `mGBA-http`, or independent `mgba-server` sessions | Start one harness per endpoint with `parallel:run`, then score the batch with `improve:parallel` |
+| 🕹️ Visible parallel gameplay | Requires independent emulator endpoints: separate mGBA + Lua socket + `mGBA-http`, or independent `mgba-server` sessions | Start one harness per RAM-capable endpoint with `parallel:run`, then score the batch with `improve:parallel` |
+| 🧠 RAM-capable parallel endpoints | Frame-only sessions can look alive but cannot support controller-primary route memory | `parallel:run` now skips endpoints that pass `/core/currentframe` but fail Pokemon RAM read preflight unless `POKEMON_PARALLEL_REQUIRE_RAM=0` is explicitly set |
 | 🧪 Automatic rulebook mutation | Active rules/skills/pathfinder are not silently rewritten | Generate proposals, run QA/tests/replay, then explicitly promote with `improve:promote` |
 | 🗺️ Full world graph | Runtime controller authority is active for Stage 0/1, with full-game stages represented in code | Promote Stage 2-5 map/quest/route memory incrementally from trace evidence |
 | 🥊 Deep battle strategy | Current battle policy is basic and safe | Add Gen 1 type chart, PP/status/item/team policy as battle memory and evaluator-tested skills |

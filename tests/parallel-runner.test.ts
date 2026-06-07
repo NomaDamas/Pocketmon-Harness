@@ -4,6 +4,7 @@ import {
   createReachableParallelHarnessPlan,
   parseParallelEndpoints,
   parseParallelPorts,
+  probeParallelEndpoint,
 } from "../src/parallel-runner";
 
 describe("parallel harness runner", () => {
@@ -94,7 +95,7 @@ describe("parallel harness runner", () => {
     }
   });
 
-  it("preflights mGBA-http ports and skips offline slots", async () => {
+  it("preflights mGBA-http ports and skips offline slots when RAM is not required", async () => {
     const seen: string[] = [];
     const fetchImpl = ((url: string | URL | Request) => {
       const text = String(url);
@@ -107,6 +108,7 @@ describe("parallel harness runner", () => {
     const plan = await createReachableParallelHarnessPlan({
       fetchImpl,
       ports: ["5001", "5002", "5003"],
+      requireRam: false,
     });
 
     expect(seen).toEqual([
@@ -136,6 +138,7 @@ describe("parallel harness runner", () => {
       ),
       fetchImpl,
       ports: [],
+      requireRam: false,
     });
 
     expect(seen).toEqual([
@@ -176,7 +179,75 @@ describe("parallel harness runner", () => {
       createReachableParallelHarnessPlan({
         fetchImpl,
         ports: ["5001", "5002", "5003"],
+        requireRam: false,
       })
-    ).rejects.toThrow("reachable=5001 skipped=5002,5003");
+    ).rejects.toThrow("reachable=5001 skipped=5002:frame-http-500");
+  });
+
+  it("requires RAM-capable endpoints for controller-primary parallel runs by default", async () => {
+    const fetchImpl = ((url: string | URL | Request) => {
+      const text = String(url);
+      if (text.endsWith("/core/currentframe")) {
+        return Promise.resolve(new Response("123", { status: 200 }));
+      }
+      return Promise.resolve(new Response("missing", { status: 404 }));
+    }) as typeof fetch;
+
+    await expect(
+      createReachableParallelHarnessPlan({
+        fetchImpl,
+        ports: ["5001", "5002"],
+      })
+    ).rejects.toThrow("RAM-capable mGBA endpoints");
+  });
+
+  it("accepts endpoints when both frame and Pokemon RAM probes succeed", async () => {
+    const seen: string[] = [];
+    const fetchImpl = ((url: string | URL | Request) => {
+      const text = String(url);
+      seen.push(text);
+      if (text.endsWith("/core/currentframe")) {
+        return Promise.resolve(new Response("123", { status: 200 }));
+      }
+      if (text.includes("/core/read8")) {
+        return Promise.resolve(new Response("37", { status: 200 }));
+      }
+      return Promise.resolve(new Response("missing", { status: 404 }));
+    }) as typeof fetch;
+
+    const plan = await createReachableParallelHarnessPlan({
+      fetchImpl,
+      ports: ["5001", "5002"],
+    });
+
+    expect(plan.instances.map((instance) => instance.port)).toEqual([
+      "5001",
+      "5002",
+    ]);
+    expect(seen).toContain("http://127.0.0.1:5001/core/read8?address=0xD35E");
+    expect(seen).toContain("http://127.0.0.1:5002/core/read8?address=0xD35E");
+  });
+
+  it("reports a clear RAM unavailable reason for frame-only endpoints", async () => {
+    const fetchImpl = ((url: string | URL | Request) => {
+      const text = String(url);
+      if (text.endsWith("/core/currentframe")) {
+        return Promise.resolve(new Response("123", { status: 200 }));
+      }
+      return Promise.resolve(new Response("not implemented", { status: 404 }));
+    }) as typeof fetch;
+
+    await expect(
+      probeParallelEndpoint(
+        { baseUrl: "http://127.0.0.1:5001", label: "5001", port: "5001" },
+        fetchImpl,
+        { requireRam: true }
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        reason: expect.stringContaining("ram-unavailable"),
+      })
+    );
   });
 });
