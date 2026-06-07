@@ -26,7 +26,8 @@ metrics all live here unless separate evidence proves a generic runtime need.
 - [Methodology Coverage](#-methodology-coverage)
 - [Gap Closure Contract](#-gap-closure-contract)
 - [Verification](#-verification)
-- [Owner](#-owner)
+- [License](#-license)
+- [Contributors](#-contributors)
 
 ## 🧭 Mission
 
@@ -739,6 +740,19 @@ Keep evidence tied to run id and ROM identity.
 
 Reject or roll back an improvement when token usage improves but progress,
 stuck behavior, action entropy, tool reliability, or ROM identity gets worse.
+
+## 📄 License
+
+This project uses a custom source-available attribution license:
+
+- Free use, modification, and redistribution are allowed.
+- Commercial use is allowed only with visible attribution to Pocketmon Harness
+  by minsingjin.
+- The license covers this project's original code and documentation only. It
+  does not grant rights to Pokemon ROMs, game assets, Nintendo, Game Freak,
+  Creatures, The Pokemon Company IP, or third-party dependencies.
+
+See [LICENSE](LICENSE) for the full terms.
 
 ## 👤 Contributors
 
