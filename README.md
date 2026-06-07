@@ -2,16 +2,35 @@
   <img src="./assets/banner.png" alt="Which harness is the best Pokémon trainer?" width="100%" />
 </p>
 
-# 🎮 minsingjin Pokemon Red Autonomous Harness
+# 🎮 Pocketmon Harness
 
-Autonomous Pokemon gameplay harness for an already-running mGBA instance. The
-agent controls the emulator through `mGBA-http`, receives a fresh observed state
-at the start of every turn, and records enough trace/metric data to compare
-experiments without changing the shared runtime dependency.
+Pocketmon Harness is minsingjin's autonomous Pokemon Red research harness for
+controller-primary gameplay, evidence-based self-improvement, and parallel
+strategy exploration. It controls an already-running mGBA instance through
+`mGBA-http`, reads RAM and screenshots, executes deterministic skills first,
+uses the model only as a fallback analyst, and records enough trace/metric data
+to compare experiments without changing the shared runtime dependency.
 
 This branch is intentionally local-harness focused: Pokemon RAM reads, movement
 supervision, stuck memory, milestone scoring, screenshot processing, and run
 metrics all live here unless separate evidence proves a generic runtime need.
+
+## 📚 Index
+
+- [Mission](#-mission)
+- [Seed Philosophy](#-seed-philosophy)
+- [Architecture At A Glance](#-architecture-at-a-glance)
+- [Full-Game Goal Hierarchy](#-full-game-goal-hierarchy)
+- [Layered Memory Design](#-layered-memory-design)
+- [Codebase Map](#-codebase-map)
+- [Requirements](#️-requirements)
+- [Live Demo Runbook](#-live-demo-runbook)
+- [Runtime Loop](#-runtime-loop)
+- [Self-Improvement And Parallel Runs](#-self-improvement-and-parallel-runs)
+- [Methodology Coverage](#-methodology-coverage)
+- [Gap Closure Contract](#-gap-closure-contract)
+- [Verification](#-verification)
+- [Owner And Contributor](#-owner-and-contributor)
 
 ## 🧭 Mission
 
@@ -721,9 +740,14 @@ runtime loop, session, event, budget, metric, store, or replay contract.
 - minsingjin
 
 The source-of-truth owner/maintainer identity for this project is `minsingjin`.
-If this checkout still points to another GitHub namespace, transfer the GitHub
-repository to `minsingjin` or create a fresh `minsingjin/pocketmon-harness`
-repository and update `origin` locally.
+The intended GitHub home for this project is
+`https://github.com/NomaDamas/Pocketmon-Harness`.
+
+When preserving history in a public GitHub repository, contributor cards are
+derived from commit authors. This repository therefore normalizes contributor
+identity with `.mailmap`, and migrations to a new public repository should use a
+minsingjin-authored history when the public contributor card must show only the
+maintainer.
 
 ### 🙏 Acknowledgements
 
