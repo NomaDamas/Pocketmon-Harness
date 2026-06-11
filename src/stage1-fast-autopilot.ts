@@ -1,11 +1,25 @@
+import {
+  chooseBattlePolicyAction,
+  selectBasicBattlePolicyForRivalEncounter,
+} from "./battle-policy";
 import { env } from "./env";
 import { type MgbaButton, MgbaHttpClient } from "./mgba-http";
 import { captureMgbaObservation, type MgbaObservation } from "./observation";
 import type { PokemonStateObservation } from "./pokemon-state";
-import { createRunTrace, updateRunTraceMetadata } from "./run-trace";
+import {
+  createRunTrace,
+  createRuntimeGameStateEvidence,
+  type EvaluatorMilestoneState,
+  updateRunTraceMetadata,
+} from "./run-trace";
 import { POKEMON_RED_STAGE1_MAP_IDS } from "./stage1-evaluator";
 import { planStage1Path } from "./stage1-pathfinder";
 import type { FailedMovementEdge, StuckMemorySnapshot } from "./stuck-memory";
+import {
+  createSupervisorEvent,
+  type SupervisorIntervention,
+  waitForPostActionSettle,
+} from "./supervisor";
 import { createViewerEventRecorder } from "./viewer-recorder";
 
 const DEFAULT_MAX_STEPS = 240;
@@ -19,9 +33,16 @@ const OBSERVATION_SETTLE_MS = parsePositiveInt(
 );
 const STUCK_ATTEMPT_THRESHOLD = 3;
 const MAX_FAILED_EDGES = 12;
+const FAST_MILESTONE_RANKS = new Map<string, number>([
+  ["ram-unavailable", 0],
+  ["pallet-town", 2],
+  ["route-1", 3],
+  ["reach-viridian-city", 4],
+]);
 
 export interface AutopilotAction {
   button: MgbaButton;
+  buttons?: readonly MgbaButton[];
   duration?: number;
   reason: string;
   toolName: "mgba_hold" | "mgba_tap";
@@ -34,6 +55,10 @@ export interface ChooseStage1FastActionOptions {
 interface MovementAttempt {
   action: string;
   context: string;
+}
+
+interface FastEventRecorder {
+  recordEvent(event: unknown, context: { turn: number }): Promise<void>;
 }
 
 class FastBacktrackingMemory {
@@ -98,6 +123,21 @@ class FastBacktrackingMemory {
   }
 }
 
+class FastMilestoneTracker {
+  #furthest: string | null = null;
+
+  observe(state: PokemonStateObservation | undefined): EvaluatorMilestoneState {
+    const current = milestoneFromState(state);
+    if (isFastMilestoneAfter(current, this.#furthest)) {
+      this.#furthest = current;
+    }
+    return {
+      current,
+      furthest: this.#furthest,
+    };
+  }
+}
+
 if (isMainModule()) {
   await runStage1FastAutopilot();
 }
@@ -121,16 +161,27 @@ export async function runStage1FastAutopilot({
   });
   const recorder = createViewerEventRecorder({ trace });
   const memory = new FastBacktrackingMemory();
+  const milestoneTracker = new FastMilestoneTracker();
 
   for (let step = 1; step <= maxSteps; step += 1) {
     const before = await captureMgbaObservation(client);
     await recorder.recordObservation(step, before);
+    const beforeMilestone = milestoneTracker.observe(before.state);
+    const beforeRuntimeGameState = createRuntimeGameStateEvidence(
+      before,
+      beforeMilestone
+    );
     if (isViridian(before.state)) {
       trace = await updateRunTraceMetadata(trace, {
-        milestone: "reach-viridian-city",
-        milestoneCurrent: "reach-viridian-city",
-        milestoneFurthest: "reach-viridian-city",
-        ramReadStatus: before.state?.readStatus,
+        milestone: beforeMilestone.furthest ?? "reach-viridian-city",
+        milestoneCurrent: beforeMilestone.current ?? "reach-viridian-city",
+        milestoneFurthest: beforeMilestone.furthest ?? "reach-viridian-city",
+        ...(beforeRuntimeGameState
+          ? {
+              ramReadStatus: beforeRuntimeGameState.readStatus,
+              runtimeGameState: beforeRuntimeGameState,
+            }
+          : {}),
         stuckEvents: memory.snapshot().stuckEvents,
       });
       console.dir({ runId: trace.runId, step, type: "stage1-fast-victory" });
@@ -145,24 +196,29 @@ export async function runStage1FastAutopilot({
     await recorder.recordEvent(actionPlanEvent(step, action), { turn: step });
     await recorder.recordEvent(toolCallEvent(step, action), { turn: step });
     memory.beforeAction(before, action);
-    const output =
-      action.toolName === "mgba_hold"
-        ? await client.hold(
-            action.button,
-            action.duration ?? MOVEMENT_HOLD_FRAMES
-          )
-        : await client.tap(action.button);
-    await recorder.recordEvent(toolResultEvent(step, action, output), {
-      turn: step,
+    await executeFastActionWithSettle({
+      action,
+      client,
+      recorder,
+      step,
     });
-    await sleep(OBSERVATION_SETTLE_MS);
     const after = await captureMgbaObservation(client);
     memory.afterObservation(after);
+    const afterMilestone = milestoneTracker.observe(after.state);
+    const afterRuntimeGameState = createRuntimeGameStateEvidence(
+      after,
+      afterMilestone
+    );
     trace = await updateRunTraceMetadata(trace, {
-      milestone: milestoneFromState(after.state),
-      milestoneCurrent: milestoneFromState(after.state),
-      milestoneFurthest: milestoneFromState(after.state),
-      ramReadStatus: after.state?.readStatus,
+      milestone: afterMilestone.furthest ?? undefined,
+      milestoneCurrent: afterMilestone.current ?? undefined,
+      milestoneFurthest: afterMilestone.furthest ?? undefined,
+      ...(afterRuntimeGameState
+        ? {
+            ramReadStatus: afterRuntimeGameState.readStatus,
+            runtimeGameState: afterRuntimeGameState,
+          }
+        : {}),
       stuckEvents: memory.snapshot().stuckEvents,
     });
     console.dir({
@@ -174,6 +230,57 @@ export async function runStage1FastAutopilot({
       type: "stage1-fast-step",
       x: after.state?.position.x,
       y: after.state?.position.y,
+    });
+  }
+}
+
+async function executeFastActionWithSettle({
+  action,
+  client,
+  recorder,
+  step,
+}: {
+  action: AutopilotAction;
+  client: MgbaHttpClient;
+  recorder: FastEventRecorder;
+  step: number;
+}): Promise<void> {
+  const settleInterventions: SupervisorIntervention[] = [];
+  const outputs: string[] = [];
+
+  if (action.toolName === "mgba_hold") {
+    outputs.push(
+      await client.hold(action.button, action.duration ?? MOVEMENT_HOLD_FRAMES)
+    );
+    await sleep(OBSERVATION_SETTLE_MS);
+  } else {
+    const buttons = action.buttons?.length ? action.buttons : [action.button];
+    for (const button of buttons) {
+      const settleStartFrame =
+        button === "A" ? (await client.status()).frame : undefined;
+      outputs.push(await client.tap(button));
+      if (button === "A") {
+        await waitForPostActionSettle({
+          client,
+          onIntervention: (intervention) => {
+            settleInterventions.push(intervention);
+          },
+          startFrame: settleStartFrame,
+        });
+      } else {
+        await sleep(OBSERVATION_SETTLE_MS);
+      }
+    }
+  }
+  await recorder.recordEvent(
+    toolResultEvent(step, action, outputs.join("\n")),
+    {
+      turn: step,
+    }
+  );
+  for (const intervention of settleInterventions) {
+    await recorder.recordEvent(createSupervisorEvent(intervention), {
+      turn: step,
     });
   }
 }
@@ -194,10 +301,28 @@ export function chooseStage1FastAction(
       toolName: "mgba_tap",
     };
   }
-  if (state.battle || state.dialogueLike === true) {
+  if (isViridian(state)) {
+    return;
+  }
+  if (state.battle) {
+    const battleAction = chooseBattlePolicyAction({
+      battlePolicy: selectBasicBattlePolicyForRivalEncounter(),
+      runtimeGameState: state,
+    });
+    if (!battleAction) {
+      return;
+    }
+    return {
+      button: battleAction.buttons[0],
+      buttons: battleAction.buttons,
+      reason: battleAction.reason,
+      toolName: "mgba_tap",
+    };
+  }
+  if (state.dialogueLike === true) {
     return {
       button: "A",
-      reason: "battle/dialogue fallback",
+      reason: "dialogue fallback",
       toolName: "mgba_tap",
     };
   }
@@ -401,22 +526,38 @@ function blockedAtCurrentPosition(
 }
 
 function actionPlanEvent(step: number, action: AutopilotAction): unknown {
+  const buttons =
+    action.toolName === "mgba_tap" && action.buttons?.length
+      ? action.buttons.join(" -> ")
+      : action.button;
   return {
-    text: `<action_plan>fast deterministic step ${step}: ${action.reason}; execute ${action.toolName} ${action.button}</action_plan>`,
+    text: `<action_plan>fast deterministic step ${step}: ${action.reason}; execute ${action.toolName} ${buttons}</action_plan>`,
     type: "assistant",
   };
 }
 
 function toolCallEvent(step: number, action: AutopilotAction): unknown {
+  const buttons = action.buttons?.length ? action.buttons : [action.button];
+  const input =
+    action.toolName === "mgba_hold"
+      ? { button: action.button, duration: action.duration }
+      : toolCallTapInput(action, buttons);
   return {
-    input:
-      action.toolName === "mgba_hold"
-        ? { button: action.button, duration: action.duration }
-        : { button: action.button },
+    input,
     toolCallId: `fast-${step}`,
     toolName: action.toolName,
     type: "tool-call",
   };
+}
+
+function toolCallTapInput(
+  action: AutopilotAction,
+  buttons: readonly MgbaButton[]
+): { button: MgbaButton; buttons?: readonly MgbaButton[] } {
+  if (buttons.length === 1) {
+    return { button: action.button };
+  }
+  return { button: action.button, buttons };
 }
 
 function toolResultEvent(
@@ -456,7 +597,7 @@ function isViridian(state: PokemonStateObservation | undefined): boolean {
 
 function milestoneFromState(
   state: PokemonStateObservation | undefined
-): string | undefined {
+): string | null {
   if (!state || state.readStatus !== "available") {
     return "ram-unavailable";
   }
@@ -470,6 +611,26 @@ function milestoneFromState(
     return "pallet-town";
   }
   return `map-${state.mapId}`;
+}
+
+function isFastMilestoneAfter(
+  candidate: string | null,
+  current: string | null
+): boolean {
+  if (!candidate) {
+    return false;
+  }
+  if (!current) {
+    return true;
+  }
+  return fastMilestoneRank(candidate) > fastMilestoneRank(current);
+}
+
+function fastMilestoneRank(milestone: string): number {
+  if (milestone.startsWith("map-")) {
+    return 1;
+  }
+  return FAST_MILESTONE_RANKS.get(milestone) ?? -1;
 }
 
 function parseMaxSteps(value: string | undefined): number {

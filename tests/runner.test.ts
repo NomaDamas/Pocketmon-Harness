@@ -18,7 +18,10 @@ import {
   streamRun,
   streamSupervisedRun,
 } from "../src/runner";
-import type { SupervisorIntervention } from "../src/supervisor";
+import {
+  type SupervisorIntervention,
+  waitForPostActionSettle,
+} from "../src/supervisor";
 import { createMgbaControlPlane } from "../src/tools";
 
 class FakeRun implements AgentRun {
@@ -44,6 +47,25 @@ class FakeRun implements AgentRun {
                 ? { done: false, value: events[index++] }
                 : { done: true, value: undefined }
             ),
+          return: () => {
+            self.returnCalls += 1;
+            return Promise.resolve({ done: true, value: undefined });
+          },
+        };
+      },
+    };
+  }
+}
+
+class HangingRun implements AgentRun {
+  returnCalls = 0;
+
+  stream(): AsyncIterable<AgentEvent> {
+    const self = this;
+    return {
+      [Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
+        return {
+          next: () => new Promise<IteratorResult<AgentEvent>>(() => undefined),
           return: () => {
             self.returnCalls += 1;
             return Promise.resolve({ done: true, value: undefined });
@@ -161,6 +183,30 @@ describe("supervised control tools", () => {
 
     expect(client.calls).toContain("hold:A:6");
     expect(client.calls).not.toContain("tap:A");
+  });
+
+  it("waits after deterministic A-button advances until the settle frame target", async () => {
+    const client = new FakeMgbaClient([110, 299, 300]);
+    const interventions: SupervisorIntervention[] = [];
+
+    await waitForPostActionSettle({
+      client: client as never,
+      onIntervention: (intervention) => {
+        interventions.push(intervention);
+      },
+      startFrame: 100,
+    });
+
+    expect(client.calls).toEqual(["status", "status", "status"]);
+    expect(interventions).toEqual([
+      expect.objectContaining({
+        polls: 3,
+        reason: "settle-wait",
+        settledFrame: 300,
+        startFrame: 100,
+        targetFrame: 300,
+      }),
+    ]);
   });
 
   it("rejects invalid buttons and directional multi-hold chains", async () => {
@@ -491,6 +537,21 @@ describe("streamRun", () => {
 
     expect(forwarded).toEqual(events.slice(0, 4));
     expect(limitReasons).toEqual(["max-steps"]);
+    expect(run.returnCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("times out a hanging fallback stream", async () => {
+    const run = new HangingRun();
+    const limitReasons: string[] = [];
+
+    await streamRun(run, () => undefined, {
+      maxDurationMs: 5,
+      onLimit: (reason) => {
+        limitReasons.push(reason);
+      },
+    });
+
+    expect(limitReasons).toEqual(["timeout"]);
     expect(run.returnCalls).toBeGreaterThanOrEqual(1);
   });
 });

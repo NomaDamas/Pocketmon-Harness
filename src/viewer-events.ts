@@ -36,6 +36,8 @@ export type ViewerEventSummaryKind =
   | "action_plan"
   | "action_tool_call"
   | "action_tool_result"
+  | "llm_fallback_invocation"
+  | "verification_result"
   | "supervisor_intervention"
   | "assistant_text"
   | "assistant_reasoning"
@@ -43,6 +45,7 @@ export type ViewerEventSummaryKind =
   | "other";
 
 export interface ViewerEventSummary {
+  controlOwner?: "deterministic-controller" | "llm-fallback";
   input?: unknown;
   kind: ViewerEventSummaryKind;
   output?: unknown;

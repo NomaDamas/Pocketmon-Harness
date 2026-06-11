@@ -28,8 +28,10 @@ export class ObservationBookkeeping {
   promoteObservation(observation: MgbaObservation, turn: number): void {
     this.#currentObservation = observation;
     this.#stuckMemory.observe(observation, turn);
-    this.#runMetricsTracker.recordStuckEvents(
-      this.#stuckMemory.snapshot().stuckEvents
+    const stuckSnapshot = this.#stuckMemory.snapshot();
+    this.#runMetricsTracker.recordStuckEvents(stuckSnapshot.stuckEvents);
+    this.#runMetricsTracker.recordBlockedRepeatedActions(
+      stuckSnapshot.blockedRepeatedActions ?? 0
     );
   }
 

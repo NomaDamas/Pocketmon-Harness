@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   AI_PROVIDER_PRESETS,
+  createHarnessEnv,
+  createHarnessStartupConfig,
   resolveAiRuntimeConfig,
   resolveOptionalAiRuntimeConfig,
 } from "../src/env";
+import {
+  DEFAULT_POKEMON_RED_STARTER_PREFERENCE,
+  POKEMON_RED_STARTER_PREFERENCE_CONFIG_KEY,
+  POKEMON_RED_STARTER_PREFERENCES,
+} from "../src/starter-preference";
 
 describe("resolveAiRuntimeConfig", () => {
   it("uses the openai-compatible preset by default", () => {
@@ -78,6 +85,50 @@ describe("resolveOptionalAiRuntimeConfig", () => {
       microModel: "fallback-fast",
       model: "fallback-strong",
       provider: "openai-compatible",
+    });
+  });
+});
+
+describe("HARNESS_STARTER_PREFERENCE", () => {
+  it("defaults to the deterministic Pokemon Red starter preference", () => {
+    expect(createHarnessEnv({}).HARNESS_STARTER_PREFERENCE).toBe(
+      DEFAULT_POKEMON_RED_STARTER_PREFERENCE
+    );
+  });
+
+  it("normalizes every configured supported starter option", () => {
+    for (const starterPreference of POKEMON_RED_STARTER_PREFERENCES) {
+      expect(
+        createHarnessEnv({
+          [POKEMON_RED_STARTER_PREFERENCE_CONFIG_KEY]: ` ${starterPreference.toUpperCase()} `,
+        }).HARNESS_STARTER_PREFERENCE
+      ).toBe(starterPreference);
+    }
+  });
+
+  it("rejects configured starter options outside Pokemon Red support", () => {
+    expect(() =>
+      createHarnessEnv({
+        HARNESS_STARTER_PREFERENCE: "pikachu",
+      })
+    ).toThrow();
+  });
+
+  it("loads the resolved starter preference into startup config", () => {
+    const harnessEnv = createHarnessEnv({
+      [POKEMON_RED_STARTER_PREFERENCE_CONFIG_KEY]: "SQUIRTLE",
+    });
+
+    expect(createHarnessStartupConfig(harnessEnv)).toEqual({
+      starterPreference: "squirtle",
+      starterTarget: {
+        id: "oak-lab-starter-squirtle",
+        label: "right Squirtle starter",
+        mapId: 40,
+        preference: "squirtle",
+        x: 6,
+        y: 2,
+      },
     });
   });
 });

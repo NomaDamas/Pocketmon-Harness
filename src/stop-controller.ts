@@ -14,7 +14,9 @@ export interface HarnessStopState {
   runMetrics: Pick<RunMetricsSnapshot, "controlToolCalls" | "turnCount">;
   startedAtMs?: number;
   tokenUsage: {
-    totalUsage: Pick<TokenUsageSnapshot, "totalTokens">;
+    tokenCost: {
+      totalUsage: Pick<TokenUsageSnapshot, "totalTokens">;
+    };
   };
   turnsRun: number;
 }
@@ -47,7 +49,7 @@ export function shouldStopHarness(
   }
   if (
     budget.maxTokens !== undefined &&
-    state.tokenUsage.totalUsage.totalTokens >= budget.maxTokens
+    state.tokenUsage.tokenCost.totalUsage.totalTokens >= budget.maxTokens
   ) {
     return `max-tokens:${budget.maxTokens}`;
   }

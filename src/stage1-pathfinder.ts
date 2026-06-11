@@ -60,6 +60,9 @@ export function planStage1Path({
   if (!current || state.battle || state.menuLike === true) {
     return;
   }
+  if (current.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity) {
+    return;
+  }
 
   const blockedActions = blockedActionsForCurrentPosition(current, stuckMemory);
   const backtrackingActive = blockedActions.length > 0;

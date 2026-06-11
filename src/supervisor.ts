@@ -135,6 +135,52 @@ export function createSupervisorEvent(
   };
 }
 
+export async function waitForPostActionSettle({
+  client,
+  onIntervention,
+  signal,
+  startFrame,
+}: {
+  client: Pick<SupervisedClient, "status">;
+  onIntervention?: (intervention: SupervisorIntervention) => void;
+  signal?: AbortSignal;
+  startFrame: number | null | undefined;
+}): Promise<void> {
+  if (startFrame === null || startFrame === undefined) {
+    return;
+  }
+
+  const targetFrame = startFrame + POST_ACTION_SETTLE_FRAMES;
+  let polls = 0;
+  while (polls < SETTLE_MAX_POLLS) {
+    polls += 1;
+    if (polls > 1) {
+      await sleep(SETTLE_POLL_INTERVAL_MS);
+    }
+    const frame = (await client.status(signal)).frame;
+    if (frame !== null && frame >= targetFrame) {
+      if (polls > 1) {
+        onIntervention?.({
+          detail: `settled from frame ${startFrame} to ${frame} after ${polls} polls`,
+          polls,
+          reason: "settle-wait",
+          settledFrame: frame,
+          startFrame,
+          targetFrame,
+        });
+      }
+      return;
+    }
+  }
+  onIntervention?.({
+    detail: `settle polling stopped after ${SETTLE_MAX_POLLS} polls without reaching target frame ${targetFrame}`,
+    polls,
+    reason: "settle-wait",
+    startFrame,
+    targetFrame,
+  });
+}
+
 class MgbaSupervisor {
   readonly #client: SupervisedClient;
   readonly #onIntervention:
@@ -305,37 +351,11 @@ class MgbaSupervisor {
     startFrame: number | undefined,
     signal?: AbortSignal
   ): Promise<void> {
-    if (startFrame === undefined) {
-      return;
-    }
-    const targetFrame = startFrame + POST_ACTION_SETTLE_FRAMES;
-    let polls = 0;
-    while (polls < SETTLE_MAX_POLLS) {
-      polls += 1;
-      if (polls > 1) {
-        await sleep(SETTLE_POLL_INTERVAL_MS);
-      }
-      const frame = (await this.#client.status(signal)).frame;
-      if (frame !== null && frame >= targetFrame) {
-        if (polls > 1) {
-          this.#intervene({
-            detail: `settled from frame ${startFrame} to ${frame} after ${polls} polls`,
-            polls,
-            reason: "settle-wait",
-            settledFrame: frame,
-            startFrame,
-            targetFrame,
-          });
-        }
-        return;
-      }
-    }
-    this.#intervene({
-      detail: `settle polling stopped after ${SETTLE_MAX_POLLS} polls without reaching target frame ${targetFrame}`,
-      polls,
-      reason: "settle-wait",
+    await waitForPostActionSettle({
+      client: this.#client,
+      onIntervention: (intervention) => this.#intervene(intervention),
+      signal,
       startFrame,
-      targetFrame,
     });
   }
 }

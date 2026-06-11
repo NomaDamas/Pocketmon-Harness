@@ -15,6 +15,7 @@ import {
 } from "./supervisor";
 
 export type RunnerEvent = AgentEvent | SupervisorInterventionEvent;
+export type RunnerLimitReason = "max-steps" | "max-tool-results" | "timeout";
 
 export const POKEMON_OBJECTIVE_PROMPT = [
   "You are a fallback analyst, not the main Pokémon player.",
@@ -47,21 +48,30 @@ export async function streamRun(
   run: AgentRun,
   onEvent: (event: AgentEvent) => void = console.dir,
   {
+    maxDurationMs,
     maxSteps,
     maxToolResults,
     onLimit,
   }: {
+    maxDurationMs?: number;
     maxSteps?: number;
     maxToolResults?: number;
-    onLimit?: (reason: "max-steps" | "max-tool-results") => void;
+    onLimit?: (reason: RunnerLimitReason) => void;
   } = {}
 ): Promise<void> {
   let steps = 0;
   let toolResults = 0;
   const iterator = run.stream()[Symbol.asyncIterator]();
+  const deadline =
+    maxDurationMs === undefined ? undefined : Date.now() + maxDurationMs;
   try {
     while (true) {
-      const next = await iterator.next();
+      const next = await nextWithTimeout(iterator, deadline);
+      if (next === "timeout") {
+        onLimit?.("timeout");
+        await iterator.return?.();
+        return;
+      }
       if (next.done) {
         return;
       }
@@ -91,6 +101,7 @@ export async function streamRun(
 
 export async function streamSupervisedRun({
   client,
+  maxDurationMs,
   maxSteps,
   maxToolResults,
   onLimit,
@@ -98,18 +109,52 @@ export async function streamSupervisedRun({
   run,
 }: {
   client: MgbaHttpClient;
+  maxDurationMs?: number;
   maxSteps?: number;
   maxToolResults?: number;
-  onLimit?: (reason: "max-steps" | "max-tool-results") => void;
+  onLimit?: (reason: RunnerLimitReason) => void;
   onEvent?: (event: RunnerEvent) => void;
   run: AgentRun;
 }): Promise<void> {
-  await streamRun(run, onEvent, { maxSteps, maxToolResults, onLimit });
+  await streamRun(run, onEvent, {
+    maxDurationMs,
+    maxSteps,
+    maxToolResults,
+    onLimit,
+  });
   await waitThroughBlackFrames({
     client,
     onIntervention: (intervention) =>
       onEvent(createSupervisorEvent(intervention)),
   });
+}
+
+async function nextWithTimeout(
+  iterator: AsyncIterator<AgentEvent>,
+  deadline: number | undefined
+): Promise<IteratorResult<AgentEvent> | "timeout"> {
+  if (deadline === undefined) {
+    return await iterator.next();
+  }
+
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    return "timeout";
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      iterator.next(),
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => resolve("timeout"), remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 export function createSupervisorInterventionEvent(

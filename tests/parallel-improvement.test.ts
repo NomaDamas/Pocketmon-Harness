@@ -21,6 +21,15 @@ describe("parallel improvement pipeline", () => {
       hypothesis: "pathfinder-first",
       events: [
         observation(1, 38, 3, 6),
+        actionToolCall({
+          controlOwner: "deterministic-controller",
+          toolCallId: "bounded-fallback-recovery-3",
+        }),
+        llmFallbackInvocation(),
+        actionToolCall({
+          controlOwner: "llm-fallback",
+          toolCallId: "fallback-stream-1",
+        }),
         observation(1, 37, 4, 7),
         verification(true),
       ],
@@ -44,6 +53,12 @@ describe("parallel improvement pipeline", () => {
     expect(result.proposal.summary).toMatchObject({
       bestRunId: "run-a",
       runCount: 2,
+    });
+    expect(result.proposal.runs[0]).toMatchObject({
+      deterministicActions: 1,
+      fallbackCalls: 1,
+      fallbackRate: 1 / 2,
+      runId: "run-a",
     });
     expect(result.proposal.strategyTree.root.children[0]?.children).toEqual(
       expect.arrayContaining([
@@ -226,6 +241,48 @@ function verification(success: boolean) {
     summary: {
       kind: "assistant_text",
       text: `<verification_result success="${success}">ok</verification_result>`,
+    },
+    timestamp: "2026-06-06T00:00:00.000Z",
+    type: "agent-event",
+  };
+}
+
+function actionToolCall({
+  controlOwner,
+  toolCallId,
+}: {
+  controlOwner?: "deterministic-controller" | "llm-fallback";
+  toolCallId: string;
+}) {
+  return {
+    runId: "run",
+    schemaVersion: 1,
+    summary: {
+      ...(controlOwner ? { controlOwner } : {}),
+      input: { button: "A" },
+      kind: "action_tool_call",
+      toolCallId,
+      toolName: "mgba_tap",
+    },
+    timestamp: "2026-06-06T00:00:00.000Z",
+    type: "agent-event",
+  };
+}
+
+function llmFallbackInvocation() {
+  return {
+    runId: "run",
+    schemaVersion: 1,
+    summary: {
+      kind: "llm_fallback_invocation",
+      output: {
+        attempt: 1,
+        edgeKey: "unknown:fallback-analysis",
+        phase: "unknown",
+        policy: "llm-fallback",
+        waypoint: "fallback-analysis",
+      },
+      text: "unknown RAM map requires bounded fallback analyst",
     },
     timestamp: "2026-06-06T00:00:00.000Z",
     type: "agent-event",

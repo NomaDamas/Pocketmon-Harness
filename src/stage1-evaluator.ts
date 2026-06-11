@@ -60,6 +60,7 @@ export const stage1EvaluatorMetadataSchema = z
     frameStart: z.number().int().nonnegative().optional(),
     iteration: z.number().int().nonnegative().optional(),
     methodologyNodeId: z.string().min(1).optional(),
+    milestoneId: z.string().min(1).optional(),
     runId: z.string().min(1).optional(),
     tokenUsage: stage1TokenUsageDiagnosticSchema.optional(),
     turn: z.number().int().nonnegative().optional(),
@@ -200,6 +201,14 @@ interface Stage1MapPosition {
   mapId: number;
   x: number;
   y: number;
+}
+
+interface Stage1RamEvidencePayload {
+  mapId: number | null;
+  milestoneId?: string;
+  readStatus: PokemonStateObservation["readStatus"];
+  x: number | null;
+  y: number | null;
 }
 
 interface Stage1LoopSignature {
@@ -400,7 +409,10 @@ export function evaluateStage1MapTransitionProgress({
           severity: "warning",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayload(currentState),
+        previous: createRamEvidencePayload(previousState),
+      }),
       progressScore: 0,
       progressStatus: "unknown",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -421,7 +433,10 @@ export function evaluateStage1MapTransitionProgress({
           severity: "warning",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayload(currentState),
+        previous: createRamEvidencePayload(previousState),
+      }),
       progressScore: 0,
       progressStatus: "unknown",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -451,7 +466,10 @@ export function evaluateStage1MapTransitionProgress({
           severity: "info",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayload(currentState),
+        previous: createRamEvidencePayload(previousState),
+      }),
       progressScore: 1,
       progressStatus: "victory",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -479,7 +497,10 @@ export function evaluateStage1MapTransitionProgress({
         severity: "info",
       },
     ],
-    metadata: createEvaluatorMetadata(metadata, evaluatorId),
+    metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+      current: createRamEvidencePayload(currentState),
+      previous: createRamEvidencePayload(previousState),
+    }),
     progressScore: currentScore,
     progressStatus: northboundProgress ? "progress" : "no-progress",
     schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -505,7 +526,9 @@ export function evaluateStage1ViridianCitySuccess({
           severity: "warning",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayload(currentState),
+      }),
       progressScore: 0,
       progressStatus: "unknown",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -528,7 +551,9 @@ export function evaluateStage1ViridianCitySuccess({
           severity: "info",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayload(currentState),
+      }),
       progressScore: 1,
       progressStatus: "victory",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -550,7 +575,9 @@ export function evaluateStage1ViridianCitySuccess({
         severity: "info",
       },
     ],
-    metadata: createEvaluatorMetadata(metadata, evaluatorId),
+    metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+      current: createRamEvidencePayload(currentState),
+    }),
     progressScore: 0,
     progressStatus: "no-progress",
     schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -1118,12 +1145,47 @@ function sumTokenUsage(
 
 function createEvaluatorMetadata(
   metadata: Stage1EvaluatorMetadata | undefined,
-  evaluatorId: string
+  evaluatorId: string,
+  ram?: {
+    current?: Stage1RamEvidencePayload;
+    previous?: Stage1RamEvidencePayload;
+  }
 ): Stage1EvaluatorMetadata {
+  const milestoneId = metadata?.milestoneId;
+  const ramWithMilestone =
+    ram && milestoneId
+      ? {
+          current: addMilestoneToRamEvidence(ram.current, milestoneId),
+          previous: addMilestoneToRamEvidence(ram.previous, milestoneId),
+        }
+      : ram;
+  const mergedExtra =
+    ramWithMilestone || metadata?.extra
+      ? {
+          ...metadata?.extra,
+          ...(ramWithMilestone ? { ram: ramWithMilestone } : {}),
+        }
+      : undefined;
+
   return stage1EvaluatorMetadataSchema.parse({
     ...metadata,
     evaluatorId,
+    extra: mergedExtra,
   });
+}
+
+function addMilestoneToRamEvidence(
+  payload: Stage1RamEvidencePayload | undefined,
+  milestoneId: string
+): Stage1RamEvidencePayload | undefined {
+  if (!payload) {
+    return;
+  }
+
+  return {
+    ...payload,
+    milestoneId,
+  };
 }
 
 function createLoopEvaluatorMetadata(
@@ -1216,7 +1278,10 @@ function evaluateKnownMapChange({
           severity: "info",
         },
       ],
-      metadata: createEvaluatorMetadata(metadata, evaluatorId),
+      metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+        current: createRamEvidencePayloadFromPosition(current),
+        previous: createRamEvidencePayloadFromPosition(previous),
+      }),
       progressScore: forwardTransition.score,
       progressStatus: isVictory ? "victory" : "progress",
       schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -1242,7 +1307,10 @@ function evaluateKnownMapChange({
         severity: "warning",
       },
     ],
-    metadata: createEvaluatorMetadata(metadata, evaluatorId),
+    metadata: createEvaluatorMetadata(metadata, evaluatorId, {
+      current: createRamEvidencePayloadFromPosition(current),
+      previous: createRamEvidencePayloadFromPosition(previous),
+    }),
     progressScore: currentMap.baseScore,
     progressStatus: "regressed",
     schemaVersion: STAGE1_EVALUATOR_SCHEMA_VERSION,
@@ -1252,6 +1320,34 @@ function evaluateKnownMapChange({
 
 function formatMapPosition({ mapId, x, y }: Stage1MapPosition): string {
   return `map=${mapId} x=${x} y=${y}`;
+}
+
+function createRamEvidencePayload(
+  state: PokemonStateObservation | undefined
+): Stage1RamEvidencePayload | undefined {
+  if (!state) {
+    return;
+  }
+
+  return {
+    mapId: state.mapId,
+    readStatus: state.readStatus,
+    x: state.position.x,
+    y: state.position.y,
+  };
+}
+
+function createRamEvidencePayloadFromPosition({
+  mapId,
+  x,
+  y,
+}: Stage1MapPosition): Stage1RamEvidencePayload {
+  return {
+    mapId,
+    readStatus: "available",
+    x,
+    y,
+  };
 }
 
 function readUsableMapPosition(

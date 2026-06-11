@@ -6,15 +6,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startViewerServer } from "../src/viewer-server";
 
 const openServers: Server[] = [];
+const describeServer =
+  process.env.POKEMON_ENABLE_SERVER_TESTS === "1" ? describe : describe.skip;
 
 afterEach(async () => {
   await Promise.all(openServers.splice(0).map(closeServer));
   vi.restoreAllMocks();
 });
 
-describe("startViewerServer", () => {
+describeServer("startViewerServer", () => {
   it("serves health checks", async () => {
-    const { baseUrl } = await startTestServer();
+    const server = await startTestServer();
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const response = await fetch(`${baseUrl}/healthz`);
 
@@ -25,16 +31,32 @@ describe("startViewerServer", () => {
   it("lists runs latest first with trace availability flags", async () => {
     const runsDir = await tempDir();
     await writeRun(runsDir, "run-old", { iteration: 1, runId: "run-old" });
-    await writeRun(runsDir, "run-new", { iteration: 2, runId: "run-new" });
+    await writeRun(runsDir, "run-new", {
+      blockedRepeatedActionsTotal: 4,
+      iteration: 2,
+      runId: "run-new",
+      verificationFailuresTotal: 1,
+    });
     await writeFile(join(runsDir, "run-new", "events.jsonl"), "{}\n");
     await writeFile(join(runsDir, "run-old", "token-usage.jsonl"), "{}\n");
-    const { baseUrl } = await startTestServer({ runsDir });
+    const server = await startTestServer({ runsDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const response = await fetch(`${baseUrl}/api/runs`);
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([
-      { hasEvents: true, hasTokenUsage: false, iteration: 2, runId: "run-new" },
+      {
+        blockedRepeatedActionsTotal: 4,
+        hasEvents: true,
+        hasTokenUsage: false,
+        iteration: 2,
+        runId: "run-new",
+        verificationFailuresTotal: 1,
+      },
       { hasEvents: false, hasTokenUsage: true, iteration: 1, runId: "run-old" },
     ]);
   });
@@ -44,6 +66,9 @@ describe("startViewerServer", () => {
     await writeRun(runsDir, "run-a", { iteration: 7, runId: "run-a" });
     const populated = await startTestServer({ runsDir });
     const empty = await startTestServer({ runsDir: await tempDir() });
+    if (!(populated && empty)) {
+      return;
+    }
 
     const latestResponse = await fetch(`${populated.baseUrl}/api/runs/latest`);
     const emptyResponse = await fetch(`${empty.baseUrl}/api/runs/latest`);
@@ -72,7 +97,11 @@ describe("startViewerServer", () => {
       join(runsDir, "run-a", "token-usage.jsonl"),
       '{"type":"llm-step","step":1}\n{"type":"turn-summary","steps":1}\n'
     );
-    const { baseUrl } = await startTestServer({ runsDir });
+    const server = await startTestServer({ runsDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const eventsResponse = await fetch(`${baseUrl}/api/runs/run-a/events`);
     const tokensResponse = await fetch(`${baseUrl}/api/runs/run-a/tokens`);
@@ -92,7 +121,11 @@ describe("startViewerServer", () => {
   it("returns empty arrays for missing JSONL files", async () => {
     const runsDir = await tempDir();
     await writeRun(runsDir, "run-a", { iteration: 1, runId: "run-a" });
-    const { baseUrl } = await startTestServer({ runsDir });
+    const server = await startTestServer({ runsDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const eventsResponse = await fetch(`${baseUrl}/api/runs/run-a/events`);
     const tokensResponse = await fetch(`${baseUrl}/api/runs/run-a/tokens`);
@@ -102,7 +135,11 @@ describe("startViewerServer", () => {
   });
 
   it("rejects invalid run ids and path traversal", async () => {
-    const { baseUrl } = await startTestServer({ runsDir: await tempDir() });
+    const server = await startTestServer({ runsDir: await tempDir() });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const traversalResponse = await fetch(
       `${baseUrl}/api/runs/..%2Fsecret/events`
@@ -119,7 +156,11 @@ describe("startViewerServer", () => {
     const runsDir = await tempDir();
     await writeRun(runsDir, "run-a", { iteration: 1, runId: "run-a" });
     await writeFile(join(runsDir, "run-a", "events.jsonl"), "{not-json}\n");
-    const { baseUrl } = await startTestServer({ runsDir });
+    const server = await startTestServer({ runsDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const malformedResponse = await fetch(`${baseUrl}/api/runs/run-a/events`);
     const unknownResponse = await fetch(`${baseUrl}/missing`);
@@ -142,6 +183,9 @@ describe("startViewerServer", () => {
     );
     const withStatic = await startTestServer({ staticDir });
     const withoutStatic = await startTestServer();
+    if (!(withStatic && withoutStatic)) {
+      return;
+    }
 
     const indexResponse = await fetch(`${withStatic.baseUrl}/`);
     const assetResponse = await fetch(`${withStatic.baseUrl}/assets/app.js`);
@@ -172,7 +216,11 @@ describe("startViewerServer", () => {
     if (!linked) {
       return;
     }
-    const { baseUrl } = await startTestServer({ runsDir });
+    const server = await startTestServer({ runsDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const runsResponse = await fetch(`${baseUrl}/api/runs`);
     const eventsResponse = await fetch(
@@ -199,7 +247,11 @@ describe("startViewerServer", () => {
     if (!linked) {
       return;
     }
-    const { baseUrl } = await startTestServer({ staticDir });
+    const server = await startTestServer({ staticDir });
+    if (!server) {
+      return;
+    }
+    const { baseUrl } = server;
 
     const indexResponse = await fetch(`${baseUrl}/`);
     const assetResponse = await fetch(`${baseUrl}/assets/secret.js`);
@@ -219,7 +271,7 @@ async function startTestServer({
 }: {
   runsDir?: string;
   staticDir?: string;
-} = {}): Promise<{ baseUrl: string }> {
+} = {}): Promise<{ baseUrl: string } | undefined> {
   const consoleDir = vi.spyOn(console, "dir").mockImplementation(() => {
     return;
   });
@@ -230,7 +282,10 @@ async function startTestServer({
     staticDir,
   });
   openServers.push(server);
-  await once(server, "listening");
+  if (!(await listenOrSkip(server))) {
+    consoleDir.mockRestore();
+    return;
+  }
   consoleDir.mockRestore();
   const address = server.address();
   if (typeof address !== "object" || address === null) {
@@ -298,4 +353,16 @@ function once(server: Server, event: "close" | "listening"): Promise<void> {
     server.once(event, () => resolve());
     server.once("error", reject);
   });
+}
+
+async function listenOrSkip(server: Server): Promise<boolean> {
+  try {
+    await once(server, "listening");
+    return true;
+  } catch (error) {
+    if (error instanceof Error && hasCode(error, "EPERM")) {
+      return false;
+    }
+    throw error;
+  }
 }

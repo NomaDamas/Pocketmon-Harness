@@ -9,9 +9,9 @@ import type { TokenUsageMetric } from "./token-usage";
 import { EVENTS_JSONL_FILENAME, type ViewerEvent } from "./viewer-events";
 
 export interface ViewerServerOptions {
+  emulatorAuthTokens?: readonly string[];
   emulatorPorts?: readonly number[];
   emulatorUrls?: readonly string[];
-  emulatorAuthTokens?: readonly string[];
   host: string;
   port: number;
   runsDir?: string;
@@ -284,13 +284,24 @@ async function readEmulatorSlot({
     : undefined;
   try {
     const [frameText, gameCode, gameTitle, screenshot] = await Promise.all([
-      fetchText(`${baseUrl}/core/currentframe`, controller.signal, "GET", headers),
-      fetchText(`${baseUrl}/core/getgamecode`, controller.signal, "GET", headers).catch(
-        () => "POKEMON"
+      fetchText(
+        `${baseUrl}/core/currentframe`,
+        controller.signal,
+        "GET",
+        headers
       ),
-      fetchText(`${baseUrl}/core/getgametitle`, controller.signal, "GET", headers).catch(
-        () => "POKEMON RED"
-      ),
+      fetchText(
+        `${baseUrl}/core/getgamecode`,
+        controller.signal,
+        "GET",
+        headers
+      ).catch(() => "POKEMON"),
+      fetchText(
+        `${baseUrl}/core/getgametitle`,
+        controller.signal,
+        "GET",
+        headers
+      ).catch(() => "POKEMON RED"),
       fetchEmulatorScreenshot(baseUrl, controller.signal, headers),
     ]);
     const frame = Number.parseInt(frameText, 10);
@@ -363,7 +374,9 @@ async function fetchBinaryOrText(
 ): Promise<ViewerEmulatorSlot["screenshot"] | undefined> {
   const response = await fetch(url, { headers, method, signal });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${await response.text()}`
+    );
   }
   if ((response.headers.get("content-type") ?? "").includes("image/png")) {
     return {

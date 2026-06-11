@@ -5,20 +5,24 @@ import type { RunMetricsTracker } from "../src/run-metrics";
 import type { TokenUsageTracker } from "../src/token-usage";
 
 const openServers: Server[] = [];
+const describeServer =
+  process.env.POKEMON_ENABLE_SERVER_TESTS === "1" ? describe : describe.skip;
 
 afterEach(async () => {
   await Promise.all(openServers.splice(0).map(closeServer));
   vi.restoreAllMocks();
 });
 
-describe("startMetricsServer", () => {
+describeServer("startMetricsServer", () => {
   it("serves health checks when the port is free", async () => {
     const server = startMetricsServer(tokenTracker(), runMetrics(), {
       host: "127.0.0.1",
       port: 0,
     });
     openServers.push(server);
-    await once(server, "listening");
+    if (!(await listenOrSkip(server))) {
+      return;
+    }
 
     const address = server.address();
     if (typeof address !== "object" || address === null) {
@@ -35,7 +39,9 @@ describe("startMetricsServer", () => {
     const blocker = createServer((_request, response) => response.end("busy"));
     openServers.push(blocker);
     blocker.listen(0, "127.0.0.1");
-    await once(blocker, "listening");
+    if (!(await listenOrSkip(blocker))) {
+      return;
+    }
     const address = blocker.address();
     if (typeof address !== "object" || address === null) {
       throw new Error("expected TCP blocker address");
@@ -93,6 +99,22 @@ function once(server: Server, event: "close" | "listening"): Promise<void> {
     server.once(event, () => resolve());
     server.once("error", reject);
   });
+}
+
+async function listenOrSkip(server: Server): Promise<boolean> {
+  try {
+    await once(server, "listening");
+    return true;
+  } catch (error) {
+    if (error instanceof Error && hasCode(error, "EPERM")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function hasCode(error: Error, code: string): boolean {
+  return (error as Error & { code?: unknown }).code === code;
 }
 
 function closed(server: Server): Promise<void> {

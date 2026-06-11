@@ -107,7 +107,9 @@ export class SharedStrategyMemory {
     await appendJsonl(this.#path, record);
   }
 
-  async suggest(observation: MgbaObservation): Promise<SharedStrategySuggestion | undefined> {
+  async suggest(
+    observation: MgbaObservation
+  ): Promise<SharedStrategySuggestion | undefined> {
     if (!this.enabled) {
       return;
     }
@@ -130,16 +132,17 @@ export class SharedStrategyMemory {
       const key = JSON.stringify(record.action);
       grouped.set(key, [...(grouped.get(key) ?? []), record]);
     }
-    const [bestKey, bestRecords] = [...grouped.entries()].sort(
-      (left, right) =>
-        right[1].length - left[1].length ||
-        right[1].at(-1)!.createdAt.localeCompare(left[1].at(-1)!.createdAt)
+    const [bestKey, bestRecords] = [...grouped.entries()].sort((left, right) =>
+      compareSharedStrategyGroups(left[1], right[1])
     )[0] ?? [undefined, undefined];
     if (!(bestKey && bestRecords)) {
       return;
     }
     const action = JSON.parse(bestKey) as SharedStrategyActionRecord["action"];
-    const latest = bestRecords.at(-1)!;
+    const latest = bestRecords.at(-1);
+    if (!latest) {
+      return;
+    }
     return {
       action: {
         button: action.button,
@@ -156,7 +159,22 @@ export class SharedStrategyMemory {
   }
 }
 
-export function observationStateKey(observation: MgbaObservation): string | undefined {
+function compareSharedStrategyGroups(
+  left: readonly SharedStrategyActionRecord[],
+  right: readonly SharedStrategyActionRecord[]
+): number {
+  const lengthDelta = right.length - left.length;
+  if (lengthDelta !== 0) {
+    return lengthDelta;
+  }
+  return (right.at(-1)?.createdAt ?? "").localeCompare(
+    left.at(-1)?.createdAt ?? ""
+  );
+}
+
+export function observationStateKey(
+  observation: MgbaObservation
+): string | undefined {
   const state = observation.state;
   if (!state || state.readStatus !== "available" || state.mapId === null) {
     return;

@@ -102,12 +102,16 @@ describe("ObservationBookkeeping", () => {
     bookkeeping.promoteObservation(stationaryObservation, 9);
 
     expect(memory.snapshot().stuckEvents).toBe(1);
+    expect(memory.snapshot().blockedRepeatedActions).toBe(1);
     expect(metrics.snapshot().stuckEvents).toBe(1);
+    expect(metrics.snapshot().blockedRepeatedActionsTotal).toBe(1);
 
     bookkeeping.promoteObservation(stationaryObservation, 10);
     bookkeeping.promoteObservation(stationaryObservation, 11);
 
     expect(memory.snapshot().stuckEvents).toBe(1);
+    expect(memory.snapshot().blockedRepeatedActions).toBe(1);
     expect(metrics.snapshot().stuckEvents).toBe(1);
+    expect(metrics.snapshot().blockedRepeatedActionsTotal).toBe(1);
   });
 });

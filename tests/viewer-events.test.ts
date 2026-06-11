@@ -146,6 +146,157 @@ describe("ViewerEventRecorder", () => {
     ]);
   });
 
+  it("persists deterministic controller ownership on control call summaries", async () => {
+    const trace = await createTrace();
+    const recorder = createViewerEventRecorder({
+      now: () => new Date("2026-05-24T01:02:03.000Z"),
+      trace,
+    });
+
+    await recorder.recordEvent(
+      {
+        controlOwner: "deterministic-controller",
+        input: { button: "Down", duration: 10 },
+        toolCallId: "bounded-fallback-recovery-3",
+        toolName: "mgba_hold",
+        type: "tool-call",
+      },
+      { turn: 5 }
+    );
+
+    await expect(readEvents(trace.metricsDir)).resolves.toEqual([
+      expect.objectContaining({
+        summary: {
+          controlOwner: "deterministic-controller",
+          input: { button: "Down", duration: 10 },
+          kind: "action_tool_call",
+          toolCallId: "bounded-fallback-recovery-3",
+          toolName: "mgba_hold",
+        },
+      }),
+    ]);
+  });
+
+  it("persists LLM fallback invocation summaries and fallback-owned controls", async () => {
+    const trace = await createTrace();
+    const recorder = createViewerEventRecorder({
+      now: () => new Date("2026-05-24T01:02:03.000Z"),
+      trace,
+    });
+
+    await recorder.recordEvent(
+      {
+        attempt: 1,
+        edgeKey: "unknown:fallback-analysis",
+        maxAttempts: 2,
+        phase: "unknown",
+        policy: "llm-fallback",
+        reason: "unknown RAM map requires bounded fallback analyst",
+        timeoutMs: 1200,
+        type: "llm-fallback-invocation",
+        waypoint: "fallback-analysis",
+      },
+      { turn: 6 }
+    );
+    await recorder.recordEvent(
+      {
+        controlOwner: "llm-fallback",
+        input: { button: "A" },
+        toolCallId: "fallback-stream-1",
+        toolName: "mgba_tap",
+        type: "tool-call",
+      },
+      { turn: 6 }
+    );
+
+    await expect(readEvents(trace.metricsDir)).resolves.toEqual([
+      expect.objectContaining({
+        summary: {
+          kind: "llm_fallback_invocation",
+          output: {
+            attempt: 1,
+            edgeKey: "unknown:fallback-analysis",
+            maxAttempts: 2,
+            phase: "unknown",
+            policy: "llm-fallback",
+            reason: "unknown RAM map requires bounded fallback analyst",
+            timeoutMs: 1200,
+            waypoint: "fallback-analysis",
+          },
+          text: "unknown RAM map requires bounded fallback analyst",
+        },
+      }),
+      expect.objectContaining({
+        summary: {
+          controlOwner: "llm-fallback",
+          input: { button: "A" },
+          kind: "action_tool_call",
+          toolCallId: "fallback-stream-1",
+          toolName: "mgba_tap",
+        },
+      }),
+    ]);
+  });
+
+  it("persists structured verification result summaries with required fields and details", async () => {
+    const trace = await createTrace();
+    const recorder = createViewerEventRecorder({
+      now: () => new Date("2026-05-24T01:02:03.000Z"),
+      trace,
+    });
+
+    await recorder.recordEvent(
+      {
+        text: '<verification_result success="true" expected="movement-or-map-change">RAM map/position changed after movement</verification_result>',
+        type: "assistant-text",
+      },
+      { turn: 7 }
+    );
+    await recorder.recordEvent(
+      {
+        text: '<verification_result success="false" expected="oak-dialogue-progress">stalled Oak dialogue state after mgba_tap:A; phase remained oak_forced_walk_or_dialogue with unchanged RAM evidence</verification_result>',
+        type: "assistant-text",
+      },
+      { turn: 8 }
+    );
+
+    await expect(readEvents(trace.metricsDir)).resolves.toEqual([
+      {
+        runId: trace.runId,
+        schemaVersion: VIEWER_EVENT_SCHEMA_VERSION,
+        summary: {
+          kind: "verification_result",
+          output: {
+            expected: "movement-or-map-change",
+            reason: "RAM map/position changed after movement",
+            success: true,
+          },
+          text: '<verification_result success="true" expected="movement-or-map-change">RAM map/position changed after movement</verification_result>',
+        },
+        timestamp: "2026-05-24T01:02:03.000Z",
+        turn: 7,
+        type: "agent-event",
+      },
+      {
+        runId: trace.runId,
+        schemaVersion: VIEWER_EVENT_SCHEMA_VERSION,
+        summary: {
+          kind: "verification_result",
+          output: {
+            expected: "oak-dialogue-progress",
+            reason:
+              "stalled Oak dialogue state after mgba_tap:A; phase remained oak_forced_walk_or_dialogue with unchanged RAM evidence",
+            success: false,
+          },
+          text: '<verification_result success="false" expected="oak-dialogue-progress">stalled Oak dialogue state after mgba_tap:A; phase remained oak_forced_walk_or_dialogue with unchanged RAM evidence</verification_result>',
+        },
+        timestamp: "2026-05-24T01:02:03.000Z",
+        turn: 8,
+        type: "agent-event",
+      },
+    ]);
+  });
+
   it("summarizes supervisor interventions and non-action assistant/lifecycle events", async () => {
     const trace = await createTrace();
     const recorder = createViewerEventRecorder({

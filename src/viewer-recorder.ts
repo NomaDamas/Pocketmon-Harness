@@ -20,6 +20,9 @@ const CONTROL_TOOLS = new Set([
 ]);
 
 const ACTION_PLAN_PATTERN = /<action_plan>([\s\S]*?)<\/action_plan>/i;
+const VERIFICATION_RESULT_PATTERN =
+  /<verification_result\b([^>]*)>([\s\S]*?)<\/verification_result>/i;
+const XML_ATTRIBUTE_PATTERN = /([a-zA-Z_:][\w:.-]*)="([^"]*)"/g;
 
 const LIFECYCLE_EVENTS = new Set([
   "run-start",
@@ -112,6 +115,11 @@ export function summarizeEvent(event: unknown): ViewerEventSummary {
     return supervisorIntervention;
   }
 
+  const fallbackInvocation = summarizeLlmFallbackInvocation(event);
+  if (fallbackInvocation) {
+    return fallbackInvocation;
+  }
+
   const toolSummary = summarizeControlToolEvent(event);
   if (toolSummary) {
     return toolSummary;
@@ -124,6 +132,11 @@ export function summarizeEvent(event: unknown): ViewerEventSummary {
 
   const assistantText = extractAssistantText(event);
   if (assistantText !== undefined) {
+    const verificationResult = extractVerificationResult(assistantText);
+    if (verificationResult) {
+      return verificationResult;
+    }
+
     const actionPlan = extractActionPlan(assistantText);
     return actionPlan
       ? { kind: "action_plan", text: actionPlan }
@@ -138,6 +151,33 @@ export function summarizeEvent(event: unknown): ViewerEventSummary {
   return { kind: "other" };
 }
 
+function summarizeLlmFallbackInvocation(
+  event: unknown
+): ViewerEventSummary | undefined {
+  if (stringProperty(event, "type") !== "llm-fallback-invocation") {
+    return;
+  }
+
+  const output = {
+    attempt: numberProperty(event, "attempt"),
+    edgeKey: stringProperty(event, "edgeKey"),
+    maxAttempts: numberProperty(event, "maxAttempts"),
+    phase: stringProperty(event, "phase"),
+    policy: stringProperty(event, "policy"),
+    reason: stringProperty(event, "reason"),
+    timeoutMs: numberProperty(event, "timeoutMs"),
+    waypoint: stringProperty(event, "waypoint"),
+  };
+
+  return {
+    kind: "llm_fallback_invocation",
+    output: Object.fromEntries(
+      Object.entries(output).filter((entry) => entry[1] !== undefined)
+    ),
+    text: stringProperty(event, "reason"),
+  };
+}
+
 function summarizeControlToolEvent(
   event: unknown
 ): ViewerEventSummary | undefined {
@@ -148,8 +188,10 @@ function summarizeControlToolEvent(
   }
 
   const toolCallId = stringProperty(event, "toolCallId");
+  const controlOwner = controlOwnerProperty(event);
   if (type === "tool-call") {
     return {
+      ...(controlOwner ? { controlOwner } : {}),
       kind: "action_tool_call",
       toolName,
       ...(toolCallId ? { toolCallId } : {}),
@@ -236,6 +278,53 @@ function extractActionPlan(text: string): string | undefined {
   return match?.[1]?.trim();
 }
 
+function extractVerificationResult(
+  text: string
+): ViewerEventSummary | undefined {
+  const match = VERIFICATION_RESULT_PATTERN.exec(text);
+  if (!match) {
+    return;
+  }
+
+  const attributes = parseXmlAttributes(match[1] ?? "");
+  const success = parseOptionalBoolean(attributes.success);
+  const expected = attributes.expected;
+  const reason = (match[2] ?? "").trim();
+
+  return {
+    kind: "verification_result",
+    output: Object.fromEntries(
+      Object.entries({
+        expected,
+        reason,
+        success,
+      }).filter((entry) => entry[1] !== undefined)
+    ),
+    text,
+  };
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | undefined {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return;
+}
+
+function parseXmlAttributes(attributes: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+  for (const match of attributes.matchAll(XML_ATTRIBUTE_PATTERN)) {
+    const [, key, value] = match;
+    if (key && value !== undefined) {
+      parsed[key] = value;
+    }
+  }
+  return parsed;
+}
+
 function property(value: unknown, key: string): unknown {
   return isRecord(value) ? value[key] : undefined;
 }
@@ -243,6 +332,20 @@ function property(value: unknown, key: string): unknown {
 function stringProperty(value: unknown, key: string): string | undefined {
   const result = property(value, key);
   return typeof result === "string" ? result : undefined;
+}
+
+function numberProperty(value: unknown, key: string): number | undefined {
+  const result = property(value, key);
+  return typeof result === "number" ? result : undefined;
+}
+
+function controlOwnerProperty(
+  value: unknown
+): ViewerEventSummary["controlOwner"] | undefined {
+  const result = stringProperty(value, "controlOwner");
+  return result === "deterministic-controller" || result === "llm-fallback"
+    ? result
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

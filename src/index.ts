@@ -1,12 +1,29 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Agent, type SessionHandle } from "@minpeter/pss-runtime";
-import { chooseDeterministicPolicyAction } from "./deterministic-policy";
+import { createControllerPrimaryFailureReport } from "./controller-primary-failure-report";
+import {
+  chooseDeterministicPolicyAction,
+  type DeterministicExpectedOutcome,
+  type DeterministicPolicyDecision,
+} from "./deterministic-policy";
+import {
+  resolveDeterministicVerificationExpectedOutcome,
+  verifyDeterministicOutcome,
+} from "./deterministic-verification";
 import {
   type AiProviderPreset,
+  createHarnessStartupConfig,
   env,
   getFallbackMicroAiRuntimeConfig,
   getMicroAiRuntimeConfig,
 } from "./env";
+import {
+  ControllerFirstFallbackGateAttemptTracker,
+  createBoundedLlmFallbackInvocationEvent,
+  getRivalBattleLlmControlGuard,
+  type LlmFallbackAttemptAdmission,
+  LlmFallbackGate,
+} from "./fallback-gate";
 import { readLatestImprovementHints } from "./improvement-hints";
 import { startMetricsServer } from "./metrics-server";
 import { MgbaHttpClient } from "./mgba-http";
@@ -16,25 +33,40 @@ import {
   type MgbaObservation,
 } from "./observation";
 import { ObservationBookkeeping } from "./observation-bookkeeping";
-import { PokemonMilestoneTracker } from "./pokemon-milestones";
+import {
+  POKEMON_MILESTONES,
+  PokemonMilestoneTracker,
+} from "./pokemon-milestones";
 import { createPrettyLogger } from "./pretty-log";
 import { RunMetricsTracker } from "./run-metrics";
 import {
   createOptimizedFreshRunTrace,
+  createRuntimeGameStateEvidence,
   updateRunTraceMetadata,
 } from "./run-trace";
-import { createTurnPrompt, streamSupervisedRun } from "./runner";
+import {
+  createTurnPrompt,
+  type RunnerEvent,
+  type RunnerLimitReason,
+  streamSupervisedRun,
+} from "./runner";
 import { improveLatestTrace } from "./self-improvement";
 import { SharedStrategyMemory } from "./shared-strategy";
+import { POKEMON_RED_STAGE1_MAP_IDS } from "./stage1-evaluator";
 import type { AutopilotAction } from "./stage1-fast-autopilot";
 import { shouldStopHarness } from "./stop-controller";
 import { StuckMemory } from "./stuck-memory";
 import {
   createSupervisorEvent,
   type SupervisorIntervention,
+  waitForPostActionSettle,
   waitThroughBlackFrames,
 } from "./supervisor";
-import { createTrackedModel, TokenUsageTracker } from "./token-usage";
+import {
+  createTrackedModel,
+  type TokenUsageCallMetadata,
+  TokenUsageTracker,
+} from "./token-usage";
 import { createMgbaControlPlane, describeMgbaControlPlane } from "./tools";
 import { createViewerEventRecorder } from "./viewer-recorder";
 
@@ -73,7 +105,10 @@ const tokenUsageTracker = new TokenUsageTracker({
   iteration: runTrace.iteration,
   metricsDir: runTrace.metricsDir,
   runId: runTrace.runId,
-  onMetric: prettyLogger.tokenUsage,
+  onMetric: (metric) => {
+    prettyLogger.tokenUsage(metric);
+    runMetricsTracker.recordTokenUsageMetric(metric);
+  },
 });
 const harnessBudget = {
   maxMinutes: env.HARNESS_MAX_MINUTES,
@@ -82,6 +117,7 @@ const harnessBudget = {
   maxTokens: env.HARNESS_MAX_TOKENS,
   maxTurns: env.HARNESS_MAX_TURNS,
 };
+const harnessStartupConfig = createHarnessStartupConfig(env);
 const harnessStartedAtMs = Date.now();
 
 const metricsServer = startMetricsServer(tokenUsageTracker, runMetricsTracker, {
@@ -92,6 +128,9 @@ const metricsServer = startMetricsServer(tokenUsageTracker, runMetricsTracker, {
 const recentActions: string[] = [];
 const milestoneTracker = new PokemonMilestoneTracker();
 const stuckMemory = new StuckMemory();
+const llmFallbackGate = new LlmFallbackGate();
+const controllerFirstFallbackGateAttempts =
+  new ControllerFirstFallbackGateAttemptTracker();
 const sharedStrategyMemory = new SharedStrategyMemory({
   runId: runTrace.runId,
 });
@@ -104,6 +143,7 @@ let activeAiRuntimeConfig = aiRuntimeConfig;
 let ramUnavailableFallbacks = 0;
 let requestedStopReason: string | undefined;
 let boundedFallbackActive = false;
+let pendingFallbackAttempt: LlmFallbackAttemptAdmission | undefined;
 let turnsRun = 0;
 
 session = await createPokemonSession(activeAiRuntimeConfig);
@@ -213,22 +253,30 @@ while (true) {
   tokenUsageTracker.startTurn(turnsRun);
 
   try {
+    let fallbackLimitReason: RunnerLimitReason | undefined;
+    const fallbackCallMetadata = currentFallbackCallMetadata();
+    if (fallbackCallMetadata) {
+      tokenUsageTracker.setActiveCallMetadata(fallbackCallMetadata);
+    }
     const run = await session.send(createTurnPrompt(turnsRun));
     boundedFallbackActive = true;
     await streamSupervisedRun({
       client: mgbaClient,
+      maxDurationMs: pendingFallbackAttempt?.timeoutMs,
       maxSteps: 1,
       maxToolResults: 1,
-      onLimit: () => {
+      onLimit: (reason) => {
+        fallbackLimitReason = reason;
         session.interrupt();
       },
       onEvent: (event) => {
-        runMetricsTracker.recordEvent(event);
-        observationBookkeeping.recordEvent(event, turnsRun);
-        recordRecentAction(event, recentActions);
-        prettyLogger.event(event as never);
+        const ownedEvent = markFallbackControlEvent(event);
+        runMetricsTracker.recordEvent(ownedEvent);
+        observationBookkeeping.recordEvent(ownedEvent, turnsRun);
+        recordRecentAction(ownedEvent, recentActions);
+        prettyLogger.event(ownedEvent as never);
         fireAndReportViewerWrite(
-          viewerEventRecorder.recordEvent(event, { turn: turnsRun })
+          viewerEventRecorder.recordEvent(ownedEvent, { turn: turnsRun })
         );
         const streamStopReason = currentStopReason();
         if (streamStopReason) {
@@ -238,9 +286,13 @@ while (true) {
       },
       run,
     });
+    completePendingFallbackAttempt(fallbackLimitReason ?? "interrupted");
     await tokenUsageTracker.endTurn();
   } catch (error) {
     boundedFallbackActive = false;
+    completePendingFallbackAttempt(
+      error instanceof HarnessStopError ? "interrupted" : "error"
+    );
     if (error instanceof HarnessStopError) {
       await tokenUsageTracker.endTurn();
       await stopHarness(error.reason);
@@ -254,6 +306,7 @@ while (true) {
     throw error;
   } finally {
     boundedFallbackActive = false;
+    tokenUsageTracker.clearActiveCallMetadata();
   }
   await persistRunMetricsMetadata();
 }
@@ -269,6 +322,54 @@ function currentStopReason(): string | undefined {
       turnsRun,
     })
   );
+}
+
+function isStage1ViridianVictoryObservation(
+  observation: MgbaObservation
+): boolean {
+  return (
+    observation.state?.readStatus === "available" &&
+    observation.state.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity
+  );
+}
+
+function completePendingFallbackAttempt(
+  result: RunnerLimitReason | "completed" | "error" | "interrupted"
+): void {
+  if (!pendingFallbackAttempt) {
+    return;
+  }
+
+  const completionResult =
+    result === "max-steps" || result === "max-tool-results"
+      ? "completed"
+      : result;
+  llmFallbackGate.completeAttempt({
+    edgeKey: pendingFallbackAttempt.edgeKey,
+    result: completionResult,
+  });
+  const usage = tokenUsageTracker.currentTurnUsage();
+  const callMetadata = currentFallbackCallMetadata();
+  recordHarnessEvent({
+    attempt: pendingFallbackAttempt.attempt,
+    ...(callMetadata ? { callMetadata } : {}),
+    completionTokens: usage.outputTokens,
+    controlOwner: "llm-fallback",
+    edgeKey: pendingFallbackAttempt.edgeKey,
+    maxAttempts: pendingFallbackAttempt.maxAttempts,
+    modelName: currentModelName(),
+    promptTokens: usage.inputTokens,
+    result: completionResult,
+    timeoutMs: pendingFallbackAttempt.timeoutMs,
+    totalTokens: usage.totalTokens,
+    type: "llm-fallback-completion",
+    usage,
+  });
+  recordHarnessEvent({
+    text: `<fallback_budget edge="${pendingFallbackAttempt.edgeKey}" status="attempt-finished" result="${result}" attempt="${pendingFallbackAttempt.attempt}" max="${pendingFallbackAttempt.maxAttempts}" timeoutMs="${pendingFallbackAttempt.timeoutMs}" />`,
+    type: "assistant-text",
+  });
+  pendingFallbackAttempt = undefined;
 }
 
 async function stopHarness(stopReason: string): Promise<void> {
@@ -320,9 +421,22 @@ async function closeMetricsServer(): Promise<void> {
 
 async function tryExecuteDeterministicPolicy(): Promise<boolean> {
   const observation = await captureMgbaObservation(mgbaClient);
+  if (isStage1ViridianVictoryObservation(observation)) {
+    await recordTurnObservation(observation);
+    runMetricsTracker.recordPhase({
+      phase: "viridian",
+      waypoint: "stage1-complete",
+    });
+    runTrace = await updateRunTraceMetadata(runTrace, {
+      currentPhase: "viridian",
+      currentWaypoint: "stage1-complete",
+    });
+    throw new HarnessStopError("stage1-victory:reach-viridian-city");
+  }
   const sharedSuggestion = await sharedStrategyMemory.suggest(observation);
   if (sharedSuggestion) {
-    runMetricsTracker.recordControllerAction({
+    pendingFallbackAttempt = undefined;
+    runMetricsTracker.recordPhase({
       phase: sharedSuggestion.phase,
       waypoint: sharedSuggestion.waypoint,
     });
@@ -349,26 +463,105 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
   const decision = chooseDeterministicPolicyAction({
     observation,
     recentActions,
+    starterPreference: harnessStartupConfig.starterPreference,
     stuckMemory: stuckMemory.snapshot(),
   });
   if (!decision.action) {
+    if (
+      await tryGateControllerFirstLlmFallback({ before: observation, decision })
+    ) {
+      return true;
+    }
+    if (
+      await tryGuardRivalBattleLlmFallback({ before: observation, decision })
+    ) {
+      return true;
+    }
     if (observation.state?.readStatus === "unavailable") {
       ramUnavailableFallbacks += 1;
     } else {
       ramUnavailableFallbacks = 0;
     }
-    runMetricsTracker.recordLlmFallback({
-      phase: decision.phase,
-      waypoint: decision.waypoint,
+
+    const controllerFirstGateExhaustion =
+      controllerFirstFallbackGateAttempts.exhaustionFor(decision);
+    const fallbackAdmission = llmFallbackGate.beginInvocation({
+      controllerFirstGateExhaustion,
+      decision,
     });
+    if ("allowed" in fallbackAdmission) {
+      await recordTurnObservation(observation);
+      recordHarnessEvent({
+        text: `<fallback_gate phase="${decision.phase}" waypoint="${decision.waypoint}" status="denied" edge="${fallbackAdmission.edgeKey}">${fallbackAdmission.reason}</fallback_gate>`,
+        type: "assistant-text",
+      });
+      runMetricsTracker.recordPhase({
+        phase: decision.phase,
+        waypoint: decision.waypoint,
+      });
+      runTrace = await updateRunTraceMetadata(runTrace, {
+        currentPhase: decision.phase,
+        currentWaypoint: decision.waypoint,
+      });
+      return true;
+    }
+    if ("recoveryAction" in fallbackAdmission) {
+      await recordTurnObservation(observation);
+      recordHarnessEvent({
+        text: `<fallback_budget edge="${fallbackAdmission.edgeKey}" status="blocked" attempts="${fallbackAdmission.attempts}" max="${fallbackAdmission.maxAttempts}">${fallbackAdmission.reason}</fallback_budget>`,
+        type: "assistant-text",
+      });
+      runMetricsTracker.recordPhase({
+        phase: decision.phase,
+        waypoint: decision.waypoint,
+      });
+      runTrace = await updateRunTraceMetadata(runTrace, {
+        currentPhase: decision.phase,
+        currentWaypoint: decision.waypoint,
+      });
+      const { after, verification } = await executeDeterministicButtonAction({
+        action: fallbackAdmission.recoveryAction,
+        before: observation,
+        expectedOutcome: "dialogue-progress",
+        id: `bounded-fallback-recovery-${turnsRun}`,
+        phase: decision.phase,
+        policy: "fallback-budget",
+        waypoint: decision.waypoint,
+      });
+      if (!verification.success) {
+        emitControllerPrimaryTerminalFailure({
+          after,
+          decision,
+          fallbackBlock: fallbackAdmission,
+          recoveryAction: fallbackAdmission.recoveryAction,
+          recoveryExpectedOutcome: "dialogue-progress",
+          verification,
+        });
+      }
+      return true;
+    }
+
+    pendingFallbackAttempt = fallbackAdmission;
+    recordHarnessEvent(
+      createBoundedLlmFallbackInvocationEvent({
+        admission: fallbackAdmission,
+        callMetadata: currentFallbackCallMetadata(fallbackAdmission),
+        controllerFirstGateExhaustion,
+        decision,
+      })
+    );
     runTrace = await updateRunTraceMetadata(runTrace, {
       currentPhase: decision.phase,
       currentWaypoint: decision.waypoint,
     });
     console.dir({
+      attempt: fallbackAdmission.attempt,
+      edgeKey: fallbackAdmission.edgeKey,
+      maxAttempts: fallbackAdmission.maxAttempts,
       phase: decision.phase,
       policy: decision.policy,
       reason: decision.reason,
+      timeoutMs: fallbackAdmission.timeoutMs,
       type: "llm-fallback-required",
       waypoint: decision.waypoint,
     });
@@ -378,9 +571,10 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
     }
     return false;
   }
+  pendingFallbackAttempt = undefined;
   ramUnavailableFallbacks = 0;
 
-  runMetricsTracker.recordControllerAction({
+  runMetricsTracker.recordPhase({
     phase: decision.phase,
     waypoint: decision.waypoint,
   });
@@ -392,6 +586,7 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
   await executeDeterministicButtonAction({
     action: decision.action,
     before: observation,
+    controllerRoutine: decision.controllerRoutine,
     expectedOutcome: decision.expectedOutcome,
     id: `deterministic-${decision.policy}-${turnsRun}`,
     phase: decision.phase,
@@ -401,9 +596,208 @@ async function tryExecuteDeterministicPolicy(): Promise<boolean> {
   return true;
 }
 
+function currentFallbackCallMetadata(
+  attempt = pendingFallbackAttempt
+): TokenUsageCallMetadata | undefined {
+  if (!attempt) {
+    return;
+  }
+  const metrics = runMetricsTracker.snapshot();
+
+  return {
+    attempt: attempt.attempt,
+    callPath: "bounded-llm-fallback",
+    controlOwner: "llm-fallback",
+    edgeKey: attempt.edgeKey,
+    maxAttempts: attempt.maxAttempts,
+    modelName: currentModelName(),
+    phase: metrics.currentPhase,
+    provider: activeAiRuntimeConfig.provider,
+    runId: runTrace.runId,
+    timeoutMs: attempt.timeoutMs,
+    turn: turnsRun,
+    waypoint: metrics.currentWaypoint,
+  };
+}
+
+function currentModelName(): string {
+  return `${activeAiRuntimeConfig.provider}:${activeAiRuntimeConfig.model}`;
+}
+
+async function tryGuardRivalBattleLlmFallback({
+  before,
+  decision,
+}: {
+  before: MgbaObservation;
+  decision: DeterministicPolicyDecision;
+}): Promise<boolean> {
+  const guard = getRivalBattleLlmControlGuard(decision);
+  if (!guard) {
+    return false;
+  }
+
+  await recordTurnObservation(before);
+  pendingFallbackAttempt = undefined;
+  ramUnavailableFallbacks = 0;
+  runMetricsTracker.recordPhase({
+    phase: decision.phase,
+    waypoint: decision.waypoint,
+  });
+  runTrace = await updateRunTraceMetadata(runTrace, {
+    currentPhase: decision.phase,
+    currentWaypoint: decision.waypoint,
+  });
+  recordHarnessEvent({
+    text: `<fallback_guard phase="${decision.phase}" waypoint="${decision.waypoint}" status="blocked" stopReason="${guard.stopReason}">${guard.reason} controller_reason="${decision.reason}"</fallback_guard>`,
+    type: "assistant-text",
+  });
+  throw new HarnessStopError(guard.stopReason);
+}
+
+function emitControllerPrimaryTerminalFailure({
+  after,
+  decision,
+  fallbackBlock,
+  recoveryAction,
+  recoveryExpectedOutcome,
+  verification,
+}: {
+  after: MgbaObservation;
+  decision: DeterministicPolicyDecision;
+  fallbackBlock: Extract<
+    ReturnType<LlmFallbackGate["beginInvocation"]>,
+    { recoveryAction: AutopilotAction }
+  >;
+  recoveryAction: AutopilotAction;
+  recoveryExpectedOutcome: DeterministicExpectedOutcome;
+  verification: ReturnType<typeof verifyDeterministicOutcome>;
+}): never {
+  const stopReason =
+    "controller-primary-terminal-failure:bounded-fallback-recovery-verification";
+  const metrics = runMetricsTracker.snapshot();
+  const report = createControllerPrimaryFailureReport({
+    currentPhase: metrics.currentPhase,
+    currentWaypoint: metrics.currentWaypoint,
+    decision,
+    deterministicRecoveryAction: recoveryAction,
+    deterministicRecoveryExpectedOutcome: recoveryExpectedOutcome,
+    evaluatorMilestone: {
+      current: runTrace.milestoneCurrent ?? null,
+      furthest: runTrace.milestoneFurthest ?? null,
+    },
+    fallbackBlock,
+    finalObservation: after,
+    metrics,
+    runId: runTrace.runId,
+    stopReason,
+    stuckMemory: stuckMemory.snapshot(),
+    turn: turnsRun,
+    verification,
+    verificationStage: "bounded-fallback-recovery-verification",
+  });
+  recordHarnessEvent({
+    text: `<controller_primary_terminal_failure>${JSON.stringify(report)}</controller_primary_terminal_failure>`,
+    type: "assistant-text",
+  });
+  console.dir(report);
+  throw new HarnessStopError(stopReason);
+}
+
+async function tryGateControllerFirstLlmFallback({
+  before,
+  decision,
+}: {
+  before: MgbaObservation;
+  decision: DeterministicPolicyDecision;
+}): Promise<boolean> {
+  const gateAttempt =
+    controllerFirstFallbackGateAttempts.beginAttempt(decision);
+  if (!gateAttempt) {
+    return false;
+  }
+  if ("fallbackEligible" in gateAttempt) {
+    recordHarnessEvent({
+      text: `<fallback_gate phase="${decision.phase}" waypoint="${decision.waypoint}" status="exhausted" attempts="${gateAttempt.attempts}" max="${gateAttempt.maxAttempts}">${gateAttempt.reason}</fallback_gate>`,
+      type: "assistant-text",
+    });
+    return false;
+  }
+
+  await recordTurnObservation(before);
+  recordHarnessEvent({
+    text: `<fallback_gate phase="${decision.phase}" waypoint="${decision.waypoint}" status="deterministic-a-settle-verify" attempt="${gateAttempt.attempt}" max="${gateAttempt.maxAttempts}">${gateAttempt.reason} controller_reason="${decision.reason}"</fallback_gate>`,
+    type: "assistant-text",
+  });
+
+  ramUnavailableFallbacks = 0;
+  runMetricsTracker.recordPhase({
+    phase: decision.phase,
+    waypoint: decision.waypoint,
+  });
+  runTrace = await updateRunTraceMetadata(runTrace, {
+    currentPhase: decision.phase,
+    currentWaypoint: decision.waypoint,
+  });
+  const { after, verification } = await executeDeterministicButtonAction({
+    action: gateAttempt.action,
+    before,
+    expectedOutcome: gateAttempt.expectedOutcome,
+    id: `deterministic-fallback-gate-${turnsRun}-${gateAttempt.attempt}`,
+    phase: decision.phase,
+    policy: "fallback-gate",
+    waypoint: decision.waypoint,
+  });
+  const gateExhaustion = controllerFirstFallbackGateAttempts.completeAttempt({
+    edgeKey: gateAttempt.edgeKey,
+    success: verification.success,
+    verificationReason: verification.reason,
+  });
+  if (verification.success) {
+    return true;
+  }
+  const retry = chooseDeterministicPolicyAction({
+    observation: after,
+    recentActions,
+    starterPreference: harnessStartupConfig.starterPreference,
+    stuckMemory: stuckMemory.snapshot(),
+  });
+
+  if (!retry.action) {
+    recordHarnessEvent({
+      text: gateExhaustion
+        ? `<fallback_gate phase="${retry.phase}" waypoint="${retry.waypoint}" status="exhausted" attempts="${gateExhaustion.attempts}" max="${gateExhaustion.maxAttempts}" verification="failed">${gateExhaustion.reason}; last_verification="${gateExhaustion.lastVerificationReason ?? "unknown"}"</fallback_gate>`
+        : `<fallback_gate phase="${retry.phase}" waypoint="${retry.waypoint}" status="retry-pending" attempt="${gateAttempt.attempt}" max="${gateAttempt.maxAttempts}" verification="failed">${retry.reason}</fallback_gate>`,
+      type: "assistant-text",
+    });
+    return true;
+  }
+
+  ramUnavailableFallbacks = 0;
+  runMetricsTracker.recordPhase({
+    phase: retry.phase,
+    waypoint: retry.waypoint,
+  });
+  runTrace = await updateRunTraceMetadata(runTrace, {
+    currentPhase: retry.phase,
+    currentWaypoint: retry.waypoint,
+  });
+  await executeDeterministicButtonAction({
+    action: retry.action,
+    before: after,
+    controllerRoutine: retry.controllerRoutine,
+    expectedOutcome: retry.expectedOutcome,
+    id: `deterministic-${retry.policy}-post-oak-gate-${turnsRun}`,
+    phase: retry.phase,
+    policy: retry.policy,
+    waypoint: retry.waypoint,
+  });
+  return true;
+}
+
 async function executeDeterministicButtonAction({
   action,
   before,
+  controllerRoutine,
   expectedOutcome,
   id,
   phase,
@@ -412,60 +806,50 @@ async function executeDeterministicButtonAction({
 }: {
   action: AutopilotAction;
   before: MgbaObservation;
-  expectedOutcome?:
-    | "battle-progress"
-    | "dialogue-progress"
-    | "movement-or-map-change";
+  controllerRoutine?: DeterministicPolicyDecision["controllerRoutine"];
+  expectedOutcome?: DeterministicExpectedOutcome;
   id: string;
   phase: string;
   policy: string;
   waypoint: string;
-}): Promise<void> {
+}): Promise<{
+  after: MgbaObservation;
+  verification: ReturnType<typeof verifyDeterministicOutcome>;
+}> {
+  const buttons = action.buttons?.length ? action.buttons : [action.button];
   const actionPlan = {
-    text: `<action_plan>${policy}: ${action.reason}; execute ${action.toolName} ${action.button} without LLM.</action_plan>`,
+    text: `<action_plan>${policy}: ${action.reason}; execute ${formatDeterministicAction(action, buttons)} without LLM.</action_plan>`,
     type: "assistant-text",
   } as const;
-  const toolCall = {
-    input:
-      action.toolName === "mgba_hold"
-        ? { button: action.button, duration: action.duration }
-        : { button: action.button },
-    toolCallId: id,
-    toolName: action.toolName,
-    type: "tool-call",
-  } as const;
-  const output =
-    action.toolName === "mgba_hold"
-      ? await mgbaClient.hold(action.button, action.duration ?? 10)
-      : await mgbaClient.tap(action.button);
-  const toolResult = {
-    output: { ok: true, output },
-    toolCallId: id,
-    toolName: action.toolName,
-    type: "tool-result",
-  } as const;
 
-  for (const event of [actionPlan, toolCall, toolResult] as const) {
-    runMetricsTracker.recordEvent(event);
-    observationBookkeeping.recordEvent(event, turnsRun);
-    recordRecentAction(event, recentActions);
-    prettyLogger.event(event as never);
-    fireAndReportViewerWrite(
-      viewerEventRecorder.recordEvent(event, { turn: turnsRun })
-    );
-  }
+  recordHarnessEvent(actionPlan);
+  await executeDeterministicControlAction({ action, buttons, id });
 
-  await new Promise((resolve) => setTimeout(resolve, 260));
   const after = await captureMgbaObservation(mgbaClient);
+  const verificationExpectedOutcome =
+    resolveDeterministicVerificationExpectedOutcome({
+      controllerRoutine,
+      expectedOutcome,
+    });
   const verification = verifyDeterministicOutcome({
     action,
     after,
     before,
-    expectedOutcome,
+    expectedOutcome: verificationExpectedOutcome,
   });
-  runMetricsTracker.recordVerification(
-    verification.success ? "success" : "failure"
-  );
+  if (verification.success) {
+    runMetricsTracker.recordVerification("success");
+  } else {
+    runMetricsTracker.recordEvent({
+      action: formatDeterministicAction(action, buttons),
+      expectedOutcome: verificationExpectedOutcome,
+      phase,
+      policy,
+      reason: verification.reason,
+      type: "verification-failure",
+      waypoint,
+    });
+  }
   if (
     !verification.success &&
     expectedOutcome === "movement-or-map-change" &&
@@ -476,18 +860,22 @@ async function executeDeterministicButtonAction({
       observation: before,
       turn: turnsRun,
     });
-    runMetricsTracker.recordStuckEvents(stuckMemory.snapshot().stuckEvents);
+    const stuckSnapshot = stuckMemory.snapshot();
+    runMetricsTracker.recordStuckEvents(stuckSnapshot.stuckEvents);
+    runMetricsTracker.recordBlockedRepeatedActions(
+      stuckSnapshot.blockedRepeatedActions ?? 0
+    );
   }
   await sharedStrategyMemory.recordActionSuccess({
     action,
     before,
-    expectedOutcome,
+    expectedOutcome: verificationExpectedOutcome,
     phase,
     success: verification.success,
     waypoint,
   });
   const verificationEvent = {
-    text: `<verification_result success="${verification.success}" expected="${expectedOutcome ?? "none"}">${verification.reason}</verification_result>`,
+    text: `<verification_result success="${verification.success}" expected="${verificationExpectedOutcome ?? "none"}">${verification.reason}</verification_result>`,
     type: "assistant-text",
   } as const;
   prettyLogger.event(verificationEvent as never);
@@ -495,6 +883,124 @@ async function executeDeterministicButtonAction({
     viewerEventRecorder.recordEvent(verificationEvent, { turn: turnsRun })
   );
   await recordStepObservation(after);
+  return { after, verification };
+}
+
+async function executeDeterministicControlAction({
+  action,
+  buttons,
+  id,
+}: {
+  action: AutopilotAction;
+  buttons: readonly AutopilotAction["button"][];
+  id: string;
+}): Promise<void> {
+  if (action.toolName === "mgba_hold") {
+    await executeDeterministicSingleControl({
+      button: action.button,
+      duration: action.duration,
+      id,
+      toolName: action.toolName,
+    });
+    return;
+  }
+
+  for (const [index, button] of buttons.entries()) {
+    await executeDeterministicSingleControl({
+      button,
+      id: buttons.length === 1 ? id : `${id}-${index + 1}`,
+      toolName: action.toolName,
+    });
+  }
+}
+
+async function executeDeterministicSingleControl({
+  button,
+  duration,
+  id,
+  toolName,
+}: {
+  button: AutopilotAction["button"];
+  duration?: number;
+  id: string;
+  toolName: AutopilotAction["toolName"];
+}): Promise<void> {
+  const toolCall = {
+    controlOwner: "deterministic-controller",
+    input: toolName === "mgba_hold" ? { button, duration } : { button },
+    toolCallId: id,
+    toolName,
+    type: "tool-call",
+  } as const;
+  recordHarnessEvent(toolCall);
+
+  const settleStartFrame =
+    toolName === "mgba_tap" && button === "A"
+      ? (await mgbaClient.status()).frame
+      : undefined;
+  const output =
+    toolName === "mgba_hold"
+      ? await mgbaClient.hold(button, duration ?? 10)
+      : await mgbaClient.tap(button);
+  if (toolName === "mgba_tap" && button === "A") {
+    await waitForPostActionSettle({
+      client: mgbaClient,
+      onIntervention: recordSupervisorIntervention,
+      startFrame: settleStartFrame,
+    });
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, 260));
+  }
+
+  const toolResult = {
+    output: { ok: true, output },
+    toolCallId: id,
+    toolName,
+    type: "tool-result",
+  } as const;
+  recordHarnessEvent(toolResult);
+}
+
+function formatDeterministicAction(
+  action: AutopilotAction,
+  buttons: readonly AutopilotAction["button"][]
+): string {
+  if (action.toolName === "mgba_tap" && buttons.length > 1) {
+    return `${action.toolName} ${buttons.join(" -> ")}`;
+  }
+  return `${action.toolName} ${action.button}`;
+}
+
+function recordHarnessEvent(
+  event: Parameters<typeof runMetricsTracker.recordEvent>[0]
+): void {
+  runMetricsTracker.recordEvent(event);
+  observationBookkeeping.recordEvent(event, turnsRun);
+  recordRecentAction(event, recentActions);
+  prettyLogger.event(event as never);
+  fireAndReportViewerWrite(
+    viewerEventRecorder.recordEvent(event, { turn: turnsRun })
+  );
+}
+
+function markFallbackControlEvent(
+  event: RunnerEvent
+): Parameters<typeof runMetricsTracker.recordEvent>[0] {
+  if (!isControlToolCall(event)) {
+    return event;
+  }
+  const controlOwner = (event as { controlOwner?: unknown }).controlOwner;
+  if (
+    controlOwner === "deterministic-controller" ||
+    controlOwner === "llm-fallback"
+  ) {
+    return event as Parameters<typeof runMetricsTracker.recordEvent>[0];
+  }
+
+  return {
+    ...event,
+    controlOwner: "llm-fallback",
+  };
 }
 
 async function trySwitchToFallbackModel(error: unknown): Promise<boolean> {
@@ -542,11 +1048,36 @@ async function recordObservationProgress(
   observationBookkeeping.promoteObservation(observation, turnsRun);
   await viewerEventRecorder.recordObservation(turnsRun, observation);
   const milestone = milestoneTracker.observe(observation);
-  if (milestone.furthest && milestone.furthest !== runTrace.milestoneFurthest) {
+  runMetricsTracker.recordMilestoneProgress({
+    current: milestone.current,
+    furthest: milestone.furthest,
+    sequence: POKEMON_MILESTONES,
+  });
+  const milestoneProgress = runMetricsTracker.snapshot().milestoneProgress;
+  const milestoneMetadata = {
+    milestone: milestone.furthest ?? undefined,
+    milestoneCurrent: milestone.current ?? undefined,
+    milestoneFurthest: milestone.furthest ?? undefined,
+    milestoneProgress,
+  };
+  const runtimeGameState = createRuntimeGameStateEvidence(
+    observation,
+    milestone
+  );
+  if (runtimeGameState) {
     runTrace = await updateRunTraceMetadata(runTrace, {
-      milestone: milestone.furthest,
-      milestoneCurrent: milestone.current ?? undefined,
-      milestoneFurthest: milestone.furthest,
+      ...milestoneMetadata,
+      ramReadStatus: runtimeGameState.readStatus,
+      runtimeGameState,
+    });
+    return;
+  }
+  if (
+    milestone.current !== (runTrace.milestoneCurrent ?? null) ||
+    milestone.furthest !== (runTrace.milestoneFurthest ?? null)
+  ) {
+    runTrace = await updateRunTraceMetadata(runTrace, {
+      ...milestoneMetadata,
     });
   }
 }
@@ -595,80 +1126,25 @@ function recordSupervisorIntervention(
   );
 }
 
-function verifyDeterministicOutcome({
-  action,
-  after,
-  before,
-  expectedOutcome,
-}: {
-  action: AutopilotAction;
-  after: MgbaObservation;
-  before: MgbaObservation;
-  expectedOutcome?:
-    | "battle-progress"
-    | "dialogue-progress"
-    | "movement-or-map-change";
-}): { reason: string; success: boolean } {
-  if (!expectedOutcome) {
-    return { reason: "no explicit expected outcome", success: true };
-  }
-  const beforeState = before.state;
-  const afterState = after.state;
-  if (!(beforeState && afterState)) {
-    return { reason: "state unavailable for verification", success: false };
-  }
-  if (expectedOutcome === "movement-or-map-change") {
-    const moved =
-      beforeState.mapId !== afterState.mapId ||
-      beforeState.position.x !== afterState.position.x ||
-      beforeState.position.y !== afterState.position.y;
-    return {
-      reason: moved
-        ? "RAM map/position changed after movement"
-        : `no RAM movement after ${action.toolName}:${action.button}`,
-      success: moved,
-    };
-  }
-  if (expectedOutcome === "battle-progress") {
-    return {
-      reason:
-        before.status.frame === after.status.frame
-          ? "frame did not advance during battle action"
-          : "frame advanced during battle action",
-      success: before.status.frame !== after.status.frame,
-    };
-  }
-  const progressed =
-    beforeState.dialogueLike !== afterState.dialogueLike ||
-    beforeState.menuLike !== afterState.menuLike ||
-    beforeState.battle !== afterState.battle ||
-    beforeState.mapId !== afterState.mapId ||
-    beforeState.position.x !== afterState.position.x ||
-    beforeState.position.y !== afterState.position.y;
-  const confirmedUiAdvanced =
-    (beforeState.dialogueLike === true || beforeState.menuLike === true) &&
-    before.status.frame !== after.status.frame;
-  return {
-    reason:
-      progressed || confirmedUiAdvanced
-        ? "dialogue/menu/script RAM state changed or confirmed UI advanced"
-        : `no dialogue/script progress after ${action.toolName}:${action.button}`,
-    success: progressed || confirmedUiAdvanced,
-  };
-}
-
 async function persistRunMetricsMetadata(): Promise<void> {
   const snapshot = runMetricsTracker.snapshot();
   if (
+    snapshot.blockedRepeatedActionsTotal ===
+      runTrace.blockedRepeatedActionsTotal &&
     snapshot.stuckEvents === runTrace.stuckEvents &&
-    snapshot.supervisorInterventions === runTrace.supervisorInterventions
+    snapshot.supervisorInterventions === runTrace.supervisorInterventions &&
+    snapshot.verificationFailuresTotal === runTrace.verificationFailuresTotal &&
+    snapshot.verificationSuccessesTotal === runTrace.verificationSuccessesTotal
   ) {
     return;
   }
 
   runTrace = await updateRunTraceMetadata(runTrace, {
+    blockedRepeatedActionsTotal: snapshot.blockedRepeatedActionsTotal,
     stuckEvents: snapshot.stuckEvents,
     supervisorInterventions: snapshot.supervisorInterventions,
+    verificationFailuresTotal: snapshot.verificationFailuresTotal,
+    verificationSuccessesTotal: snapshot.verificationSuccessesTotal,
   });
 }
 

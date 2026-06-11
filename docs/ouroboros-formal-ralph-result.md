@@ -1,23 +1,33 @@
 # Formal Ouroboros Ralph Result
 
-- Lineage ID: `ralph-pokemon-red-stage1-20260606`
-- Surface: `ouroboros.ralph_loop.RalphLoopRunner`
-- Status: `completed`
-- Stop reason: `qa passed`
-- Iterations: `1`
-- Full RalphHandler/EvolutionaryLoop composition: `blocked locally; hangs in this Codex surface after job start`
+- Latest job observed in this workspace: `job_a2b691ae63d8`
+- Status: `failed`
+- Stop reason: `iteration_timeout`
+- Current source state: locally verified outside Ralph
 
-## Handler Output
+## Current Status
 
-# Ralph Loop Result
+The previous Ralph loop did not complete cleanly in this Codex/Ouroboros surface.
+It timed out before producing a final approved generation. That result is not
+being hidden or re-labeled as success.
 
-Lineage ID: ralph-pokemon-red-stage1-20260606
-Status: completed
-Stop reason: qa passed
-Iterations: 1/1
+The implementation was instead completed directly in the brownfield repository
+and verified with the Node 22 guardrails documented in
+`docs/ouroboros-formal-guardrail-output.md`.
 
-## Iterations
-- 1: generation=1, action=converged, qa=passed
+## Stop Condition For Future Ralph Runs
 
-## Final generation output
-Formal evaluate approved the Stage 1 Pokemon Red autonomous harness. Ralph runner stop condition is verified against that approved artifact.
+Restart Ralph only after the runner can execute project commands under Node
+22.22.2. A valid Ralph completion for this seed must satisfy:
+
+- `pnpm typecheck` passes.
+- `pnpm test:ci` passes.
+- `pnpm build` passes.
+- `pnpm check` passes.
+- Server listen tests pass when `POKEMON_ENABLE_SERVER_TESTS=1` is enabled.
+- The generated artifact preserves controller-primary ownership: RAM/phase/
+  pathfinder/controller first, bounded LLM fallback second.
+- Active rule/skill/pathfinder hierarchy remains gated behind explicit promote.
+
+Until then, Ralph is a process limitation, not a gameplay or source-code
+approval signal.

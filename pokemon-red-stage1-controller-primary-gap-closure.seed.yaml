@@ -1,0 +1,201 @@
+goal: >
+  Close the operational gap from Stage 1 scaffold to a stable
+  controller-primary Pokemon Red autonomous harness that reaches the
+  default Stage 1 milestone sequence through Viridian City using
+  RAM/phase/pathfinder/controller-first execution, with LLM only as a
+  bounded fallback analyst.
+
+task_type: code
+
+brownfield_context:
+  project_type: brownfield
+  context_references:
+    - path: /Users/jinminseong/Desktop/pocketmon-harness
+      role: primary
+      summary: Existing Pokemon Red autonomous harness repository being upgraded from Stage 1 scaffold to stable controller-primary operation.
+    - path: src/index.ts
+      role: primary
+      summary: Main runtime loop where control ownership must move from LLM-first to deterministic-controller-first.
+    - path: src/deterministic-policy.ts
+      role: primary
+      summary: Deterministic policy module to become primary known-phase action source.
+    - path: src/phase-detector.ts
+      role: primary
+      summary: Phase detection module providing Stage 1 phase evidence.
+    - path: src/stage1-pathfinder.ts
+      role: primary
+      summary: Stage 1 pathfinding module to cover canonical milestones and failed-edge recovery.
+    - path: src/stage1-fast-autopilot.ts
+      role: primary
+      summary: Existing fast autopilot/controller path requiring deterministic Stage 1 coverage.
+    - path: src/runner.ts
+      role: primary
+      summary: Runtime prompt surface that must keep the LLM in fallback analyst role.
+    - path: src/run-metrics.ts
+      role: reference
+      summary: Metrics surface to extend with deterministic/fallback and verification evidence.
+    - path: src/stuck-memory.ts
+      role: reference
+      summary: Failed-edge and stuck-memory source for loop blocking and recovery.
+  existing_patterns:
+    - RAM-first PokemonStateObservation is already available.
+    - Phase detector maps RAM and context into named Stage 1 phases.
+    - Deterministic policies and pathfinder handle known route control before fallback.
+    - Evaluator milestones define success such as reach-viridian-city.
+    - Candidate self-improvement artifacts flow through QA/promote gate.
+    - Metrics/TUI expose runtime progress and action classification.
+
+scope:
+  primary_stage: stage1
+  default_objective: reach-viridian-city
+  not_in_scope_yet:
+    - full-game completion
+    - deep battle type-chart optimization
+    - unsafe automatic self-mutation without QA
+
+canonical_milestones:
+  - title_or_intro_or_name_entry
+  - bedroom_2f_map_38
+  - house_1f_map_37
+  - pallet_town_outside_map_0
+  - oak_forced_walk_or_dialogue
+  - oak_lab_map_40
+  - starter_selection
+  - rival_battle
+  - pallet_after_starter_map_0
+  - route1_map_12
+  - viridian_city_map_1
+
+constraints:
+  - RuntimeGameState must be the source of truth.
+  - Known Stage 1 phases must call deterministic controller before LLM.
+  - LLM fallback is allowed only for unknown state, unsupported UI, scripted ambiguity, or repeated verification failure.
+  - Fallback must never become the main route planner.
+  - bedroom_2f -> house_1f -> Pallet outside must complete with zero LLM calls.
+  - Deterministic action ratio target is >=80% on known Stage 1 route.
+  - Total Stage 1 fallback actions should stay below 20%.
+  - Same state/action no-progress >=3 must block that edge and trigger recovery.
+  - HARNESS_MAX_STEPS=50 must exit gracefully at <=50 steps.
+  - Self-improvement candidates are reviewable artifacts by default.
+  - Active rule/skill/pathfinder mutation requires explicit promote command or user approval.
+  - Auto-apply without QA is disallowed.
+
+acceptance_criteria:
+  - From a valid Pokemon Red control state, the harness reaches Viridian City or a configured Stage 1 milestone sequence without manual intervention.
+  - RAM evidence uses readStatus, mapId, x/y, phase, battle flag, and evaluator milestone.
+  - Minimal regression proves mapId 38 -> 37 -> 0 with zero LLM calls.
+  - Full Stage 1 acceptance reaches mapId 1 or evaluator success reach-viridian-city.
+  - Oak dialogue uses deterministic A/settle/phase verification before fallback.
+  - Starter selection uses configured deterministic starter preference and explicit sequence.
+  - Rival battle uses deterministic basic BattlePolicy.
+  - Failed edges are blocked after repeated no-progress.
+  - Metrics separate deterministic actions, LLM fallback calls, verification failures, blocked repeated actions, token cost, and milestone progress.
+  - Tests cover phase detection, no-LLM known route, failed-edge blocking, verification logging, fallback-only-on-unknown, max-step stop, and Stage 1 regression.
+
+ontology_schema:
+  name: ControllerPrimaryStage1Harness
+  description: >
+    Pokemon Red Stage 1 autonomous harness model using RAM-derived game state,
+    phase detection, deterministic pathfinding/controller policies, bounded
+    fallback analysis, verification metrics, failed-edge recovery, and gated
+    self-improvement.
+  fields:
+    - name: runtimeGameState
+      type: object
+      description: RAM-first source of truth including readStatus, mapId, x/y, phase, battle flag, and control state.
+      required: true
+    - name: milestoneSequence
+      type: array
+      description: Configurable ordered Stage 1 milestones with default Pokemon Red route through Viridian City.
+      required: true
+    - name: deterministicPolicy
+      type: object
+      description: Controller-first actions for known Stage 1 navigation, scripted blockers, menus, and battles.
+      required: true
+    - name: fallbackPolicy
+      type: object
+      description: Rules limiting LLM fallback to unknown, unsupported, ambiguous, or repeated verification failure states.
+      required: true
+    - name: failedEdge
+      type: object
+      description: State/action no-progress record blocked after repeated failures and used for recovery.
+      required: true
+    - name: verificationLog
+      type: array
+      description: Trace of actions, state transitions, evaluator checks, failures, and recovery outcomes.
+      required: true
+    - name: metrics
+      type: object
+      description: Deterministic ratio, fallback rate, progress score, milestone furthest, verification failures, blocked edges, token cost, and fallback cost.
+      required: true
+    - name: candidateFix
+      type: object
+      description: Reviewable self-improvement artifact for rule, skill, pathfinder, controller, or evaluator changes.
+      required: true
+    - name: promotionGate
+      type: object
+      description: Approval and QA requirements before mutating active harness behavior.
+      required: true
+
+implementation_plan:
+  - Refactor src/index.ts so deterministic policy runs before session.send().
+  - Introduce or consolidate RuntimeGameState as single source of truth.
+  - Expand src/deterministic-policy.ts coverage for Stage 1 phases.
+  - Make src/stage1-pathfinder.ts primary route action source for known maps.
+  - Strengthen verification so action success means expected state transition, not button press.
+  - Limit src/runner.ts prompt to fallback analyst behavior.
+  - Add metrics for deterministic_vs_llm ratio and fallback budget.
+  - Keep self-improvement as proposal -> QA -> explicit promote.
+
+promotion_gate:
+  required_checks:
+    - pnpm typecheck
+    - relevant unit tests
+    - deterministic Stage 1 regression tests
+    - no-LLM known-route tests
+    - failed-edge blocking tests
+    - HARNESS_MAX_STEPS stop test
+    - trace/evaluator replay where applicable
+  metric_requirements:
+    - milestoneFurthest or progressScore improves, or stays equal with lower cost.
+    - fallback_rate decreases or stays within budget.
+    - deterministic_action_ratio improves.
+    - verification_failures_total does not materially increase.
+    - repeated_failed_action_blocks are explained.
+
+evaluation_principles:
+  - name: controller_primacy
+    description: Known Stage 1 behavior is driven by RAM/phase/pathfinder/controller policies rather than LLM planning.
+    weight: 0.25
+  - name: deterministic_reliability
+    description: The harness reaches configured Stage 1 milestones, especially Viridian City, without manual intervention and with stable regressions.
+    weight: 0.25
+  - name: fallback_containment
+    description: LLM fallback is bounded, measured, used only for permitted states, and returns control to deterministic execution.
+    weight: 0.15
+  - name: verification_observability
+    description: Progress, failures, state transitions, metrics, and evaluator evidence are logged clearly enough for replay and diagnosis.
+    weight: 0.15
+  - name: recovery_safety
+    description: Repeated no-progress state/action edges are blocked and explained with safe recovery behavior.
+    weight: 0.10
+  - name: gated_self_improvement
+    description: Candidate fixes are reviewable and promoted only after tests, metrics, and explicit approval satisfy the gate.
+    weight: 0.10
+
+exit_conditions:
+  - name: all_acceptance_criteria_pass
+    description: Finish when all acceptance criteria pass.
+    criteria: All acceptance criteria pass.
+  - name: external_state_required
+    description: Stop as blocked if a required external state cannot be provided by the agent.
+    criteria: Mechanical verification fails in a way that requires user-provided external state.
+  - name: live_emulator_unavailable
+    description: Finish with limitations if live emulator verification is unavailable after local checks pass.
+    criteria: Live emulator verification is unavailable but unit/typecheck gates pass and the limitation is documented.
+
+metadata:
+  seed_id: seed_2b77c2a214d8
+  interview_id: interview_20260608_001528
+  ambiguity_score: 0.13
+  created_at: "2026-06-08T00:18:02.548334Z"

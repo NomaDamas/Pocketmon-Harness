@@ -168,14 +168,21 @@ async function scoreRun(
     (event) =>
       event.type === "agent-event" &&
       event.summary?.kind === "action_tool_call" &&
-      isControllerToolCallId(String(event.summary.toolCallId ?? ""))
+      isDeterministicControllerToolCall(event)
   ).length;
-  const fallbackCalls = events.filter(
+  const fallbackInvocations = events.filter(
+    (event) =>
+      event.type === "agent-event" &&
+      event.summary?.kind === "llm_fallback_invocation"
+  ).length;
+  const fallbackToolCalls = events.filter(
     (event) =>
       event.type === "agent-event" &&
       event.summary?.kind === "action_tool_call" &&
-      !isControllerToolCallId(String(event.summary.toolCallId ?? ""))
+      !isDeterministicControllerToolCall(event)
   ).length;
+  const fallbackCalls =
+    fallbackInvocations > 0 ? fallbackInvocations : fallbackToolCalls;
   const progressScore =
     MILESTONE_SCORE[run.milestoneFurthest ?? ""] ?? transitions * 5;
   return {
@@ -201,10 +208,27 @@ async function scoreRun(
   };
 }
 
+function isDeterministicControllerToolCall(event: ViewerEvent): boolean {
+  if (
+    event.type !== "agent-event" ||
+    event.summary?.kind !== "action_tool_call"
+  ) {
+    return false;
+  }
+  if (event.summary.controlOwner === "deterministic-controller") {
+    return true;
+  }
+  if (event.summary.controlOwner === "llm-fallback") {
+    return false;
+  }
+  return isControllerToolCallId(String(event.summary.toolCallId ?? ""));
+}
+
 function isControllerToolCallId(toolCallId: string): boolean {
   return (
     toolCallId.startsWith("deterministic-") ||
-    toolCallId.startsWith("shared-strategy-")
+    toolCallId.startsWith("shared-strategy-") ||
+    toolCallId.startsWith("bounded-fallback-recovery-")
   );
 }
 

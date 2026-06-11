@@ -10,6 +10,7 @@ import {
 export interface TokenUsageTrackerOptions {
   iteration?: number;
   metricsDir?: string;
+  modelPricing?: TokenPricingCatalog;
   onMetric?: (metric: TokenUsageMetric) => void;
   prometheusPath?: string;
   runId?: string;
@@ -26,17 +27,70 @@ export interface TokenUsageSnapshot {
   totalTokens: number;
 }
 
+export type TokenUsageCallMetadata = Record<
+  string,
+  boolean | number | string | undefined
+>;
+
+export type TokenPricingCatalog = Record<string, ModelTokenPricing>;
+
+export interface ModelTokenPricing {
+  cacheReadUsdPerMillionTokens?: number;
+  cacheWriteUsdPerMillionTokens?: number;
+  inputUsdPerMillionTokens: number;
+  outputUsdPerMillionTokens: number;
+}
+
+export interface TokenCostEstimate {
+  cacheReadCostUsd: number;
+  cacheWriteCostUsd: number;
+  currency: "USD";
+  estimatedCostUsd: number;
+  inputCostUsd: number;
+  matchedModelId?: string;
+  modelId: string;
+  outputCostUsd: number;
+  pricing: ModelTokenPricing | undefined;
+  status: "estimated" | "unpriced";
+}
+
+export interface TokenCostMetricsSnapshot {
+  lastCostEstimate: TokenCostEstimate | undefined;
+  namespace: "token-cost";
+  pricedCalls: number;
+  source: "token-usage-tracker";
+  step: number;
+  totalEstimatedCostUsd: number;
+  totalUsage: TokenUsageSnapshot;
+  turn: number;
+  turnEstimatedCostUsd: number;
+  turnUsage: TokenUsageSnapshot;
+  unpricedCalls: number;
+}
+
+export interface TokenUsageTrackerSnapshot {
+  iteration: number;
+  runId: string;
+  tokenCost: TokenCostMetricsSnapshot;
+}
+
 export type TokenUsageMetric =
   | {
+      callMetadata?: TokenUsageCallMetadata;
+      completionTokens?: number;
       iteration: number;
       modelId: string;
+      modelName?: string;
+      promptTokens?: number;
       runId: string;
       schemaVersion: 1;
       step: number;
       timestamp: string;
+      totalTokens?: number;
       turn: number;
       type: "llm-step";
       usage: TokenUsageSnapshot;
+      costEstimate?: TokenCostEstimate;
     }
   | {
       iteration: number;
@@ -70,20 +124,49 @@ interface ProviderUsage {
 
 const DEFAULT_METRICS_DIR = ".pss-mgba/metrics";
 
+export const DEFAULT_MODEL_TOKEN_PRICING: TokenPricingCatalog = {
+  "gpt-5.3-codex-spark": {
+    cacheReadUsdPerMillionTokens: 0.125,
+    inputUsdPerMillionTokens: 1.25,
+    outputUsdPerMillionTokens: 10,
+  },
+  "gpt-5.5": {
+    cacheReadUsdPerMillionTokens: 0.125,
+    inputUsdPerMillionTokens: 1.25,
+    outputUsdPerMillionTokens: 10,
+  },
+  "grok-3-mini-fast": {
+    inputUsdPerMillionTokens: 0.3,
+    outputUsdPerMillionTokens: 0.5,
+  },
+  "grok-4.3": {
+    inputUsdPerMillionTokens: 3,
+    outputUsdPerMillionTokens: 15,
+  },
+};
+
 export class TokenUsageTracker {
   readonly #jsonlPath: string;
   readonly #onMetric?: (metric: TokenUsageMetric) => void;
   readonly #prometheusPath: string;
   readonly #runId: string;
   readonly #iteration: number;
+  readonly #modelPricing: TokenPricingCatalog;
   #currentStep = 0;
   #currentTurn = 0;
+  #activeCallMetadata: TokenUsageCallMetadata | undefined;
+  #lastCostEstimate: TokenCostEstimate | undefined;
+  #pricedCalls = 0;
+  #totalEstimatedCostUsd = 0;
   #totalUsage = emptyUsage();
+  #turnEstimatedCostUsd = 0;
   #turnUsage = emptyUsage();
+  #unpricedCalls = 0;
 
   constructor({
     iteration = 0,
     metricsDir = DEFAULT_METRICS_DIR,
+    modelPricing,
     onMetric,
     prometheusPath = join(DEFAULT_METRICS_DIR, "token-usage.prom"),
     runId = "unknown",
@@ -93,43 +176,92 @@ export class TokenUsageTracker {
     this.#onMetric = onMetric;
     this.#runId = runId;
     this.#iteration = iteration;
+    this.#modelPricing = { ...DEFAULT_MODEL_TOKEN_PRICING, ...modelPricing };
   }
 
   startTurn(turn: number): void {
     this.#currentTurn = turn;
     this.#currentStep = 0;
+    this.#turnEstimatedCostUsd = 0;
     this.#turnUsage = emptyUsage();
+  }
+
+  setActiveCallMetadata(metadata: TokenUsageCallMetadata): void {
+    this.#activeCallMetadata = { ...metadata };
+  }
+
+  clearActiveCallMetadata(): void {
+    this.#activeCallMetadata = undefined;
+  }
+
+  currentTurnUsage(): TokenUsageSnapshot {
+    return { ...this.#turnUsage };
   }
 
   async recordLlmStep(
     usage: LanguageModelUsage,
-    { modelId }: { modelId: string }
+    {
+      callMetadata,
+      modelId,
+    }: { callMetadata?: TokenUsageCallMetadata; modelId: string }
   ): Promise<void> {
-    await this.recordUsageSnapshot(normalizeUsage(usage), { modelId });
+    await this.recordUsageSnapshot(normalizeUsage(usage), {
+      callMetadata,
+      modelId,
+    });
   }
 
   async recordProviderUsage(
     usage: ProviderUsage,
-    { modelId }: { modelId: string }
+    {
+      callMetadata,
+      modelId,
+    }: { callMetadata?: TokenUsageCallMetadata; modelId: string }
   ): Promise<void> {
-    await this.recordUsageSnapshot(normalizeProviderUsage(usage), { modelId });
+    await this.recordUsageSnapshot(normalizeProviderUsage(usage), {
+      callMetadata,
+      modelId,
+    });
   }
 
   async recordUsageSnapshot(
     snapshot: TokenUsageSnapshot,
-    { modelId }: { modelId: string }
+    {
+      callMetadata,
+      modelId,
+    }: { callMetadata?: TokenUsageCallMetadata; modelId: string }
   ): Promise<void> {
     this.#currentStep += 1;
     this.#turnUsage = addUsage(this.#turnUsage, snapshot);
     this.#totalUsage = addUsage(this.#totalUsage, snapshot);
+    const resolvedCallMetadata = callMetadata ?? this.#activeCallMetadata;
+    const costEstimate = estimateTokenCost(snapshot, modelId, {
+      modelPricing: this.#modelPricing,
+    });
+    this.#lastCostEstimate = costEstimate;
+    if (costEstimate.status === "estimated") {
+      this.#pricedCalls += 1;
+    } else {
+      this.#unpricedCalls += 1;
+    }
+    this.#turnEstimatedCostUsd += costEstimate.estimatedCostUsd;
+    this.#totalEstimatedCostUsd += costEstimate.estimatedCostUsd;
 
     await this.#writeMetric({
+      ...(resolvedCallMetadata
+        ? { callMetadata: { ...resolvedCallMetadata } }
+        : {}),
+      completionTokens: snapshot.outputTokens,
+      costEstimate,
       iteration: this.#iteration,
       modelId,
+      modelName: modelId,
+      promptTokens: snapshot.inputTokens,
       runId: this.#runId,
       schemaVersion: 1,
       step: this.#currentStep,
       timestamp: new Date().toISOString(),
+      totalTokens: snapshot.totalTokens,
       turn: this.#currentTurn,
       type: "llm-step",
       usage: snapshot,
@@ -153,21 +285,27 @@ export class TokenUsageTracker {
     return renderPrometheus(this.snapshot());
   }
 
-  snapshot(): {
-    iteration: number;
-    runId: string;
-    step: number;
-    totalUsage: TokenUsageSnapshot;
-    turn: number;
-    turnUsage: TokenUsageSnapshot;
-  } {
+  snapshot(): TokenUsageTrackerSnapshot {
+    const tokenCost: TokenCostMetricsSnapshot = {
+      lastCostEstimate: this.#lastCostEstimate
+        ? cloneCostEstimate(this.#lastCostEstimate)
+        : undefined,
+      namespace: "token-cost",
+      pricedCalls: this.#pricedCalls,
+      source: "token-usage-tracker",
+      step: this.#currentStep,
+      totalEstimatedCostUsd: this.#totalEstimatedCostUsd,
+      totalUsage: this.#totalUsage,
+      turn: this.#currentTurn,
+      turnEstimatedCostUsd: this.#turnEstimatedCostUsd,
+      turnUsage: this.#turnUsage,
+      unpricedCalls: this.#unpricedCalls,
+    };
+
     return {
       iteration: this.#iteration,
       runId: this.#runId,
-      step: this.#currentStep,
-      totalUsage: this.#totalUsage,
-      turn: this.#currentTurn,
-      turnUsage: this.#turnUsage,
+      tokenCost,
     };
   }
 
@@ -180,6 +318,72 @@ export class TokenUsageTracker {
     await appendFile(this.#jsonlPath, `${JSON.stringify(metric)}\n`);
     await writeFile(this.#prometheusPath, this.prometheusMetrics());
   }
+}
+
+export function estimateTokenCost(
+  usage: TokenUsageSnapshot,
+  modelId: string,
+  {
+    modelPricing = DEFAULT_MODEL_TOKEN_PRICING,
+  }: { modelPricing?: TokenPricingCatalog } = {}
+): TokenCostEstimate {
+  const resolved = resolveModelPricing(modelId, modelPricing);
+  const pricing = resolved?.pricing;
+  if (!pricing) {
+    return {
+      cacheReadCostUsd: 0,
+      cacheWriteCostUsd: 0,
+      currency: "USD",
+      estimatedCostUsd: 0,
+      inputCostUsd: 0,
+      modelId,
+      outputCostUsd: 0,
+      pricing: undefined,
+      status: "unpriced",
+    };
+  }
+
+  const cacheReadTokens = usage.cacheReadTokens;
+  const cacheWriteTokens = usage.cacheWriteTokens;
+  const hasCacheBreakdown = cacheReadTokens > 0 || cacheWriteTokens > 0;
+  const noCacheTokens =
+    usage.noCacheTokens > 0
+      ? usage.noCacheTokens
+      : Math.max(0, usage.inputTokens - cacheReadTokens - cacheWriteTokens);
+  const billableInputTokens = hasCacheBreakdown
+    ? noCacheTokens
+    : usage.inputTokens;
+  const inputCostUsd = perMillionCost(
+    billableInputTokens,
+    pricing.inputUsdPerMillionTokens
+  );
+  const outputCostUsd = perMillionCost(
+    usage.outputTokens,
+    pricing.outputUsdPerMillionTokens
+  );
+  const cacheReadCostUsd = perMillionCost(
+    cacheReadTokens,
+    pricing.cacheReadUsdPerMillionTokens ?? pricing.inputUsdPerMillionTokens
+  );
+  const cacheWriteCostUsd = perMillionCost(
+    cacheWriteTokens,
+    pricing.cacheWriteUsdPerMillionTokens ?? pricing.inputUsdPerMillionTokens
+  );
+
+  return {
+    cacheReadCostUsd,
+    cacheWriteCostUsd,
+    currency: "USD",
+    estimatedCostUsd: roundUsd(
+      inputCostUsd + outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd
+    ),
+    inputCostUsd,
+    matchedModelId: resolved.modelId,
+    modelId,
+    outputCostUsd,
+    pricing,
+    status: "estimated",
+  };
 }
 
 export function createTrackedModel({
@@ -267,14 +471,43 @@ function addUsage(
   };
 }
 
+function cloneCostEstimate(estimate: TokenCostEstimate): TokenCostEstimate {
+  return {
+    ...estimate,
+    pricing: estimate.pricing ? { ...estimate.pricing } : undefined,
+  };
+}
+
+function perMillionCost(tokens: number, usdPerMillionTokens: number): number {
+  return roundUsd((tokens / 1_000_000) * usdPerMillionTokens);
+}
+
+function roundUsd(value: number): number {
+  return Math.round(value * 1_000_000_000_000) / 1_000_000_000_000;
+}
+
+function resolveModelPricing(
+  modelId: string,
+  modelPricing: TokenPricingCatalog
+): { modelId: string; pricing: ModelTokenPricing } | undefined {
+  const direct = modelPricing[modelId];
+  if (direct) {
+    return { modelId, pricing: direct };
+  }
+
+  const shortModelId = modelId.includes(":")
+    ? modelId.slice(modelId.lastIndexOf(":") + 1)
+    : modelId;
+  const short = modelPricing[shortModelId];
+  return short ? { modelId: shortModelId, pricing: short } : undefined;
+}
+
 function renderPrometheus({
   iteration,
   runId,
-  step,
-  totalUsage,
-  turn,
-  turnUsage,
+  tokenCost,
 }: ReturnType<TokenUsageTracker["snapshot"]>): string {
+  const { step, totalUsage, turn, turnUsage } = tokenCost;
   return [
     "# HELP pss_mgba_run_iteration Current run iteration number.",
     "# TYPE pss_mgba_run_iteration gauge",
@@ -291,6 +524,14 @@ function renderPrometheus({
     "# HELP pss_mgba_tokens_total Cumulative tokens used by kind.",
     "# TYPE pss_mgba_tokens_total counter",
     ...usageLines("pss_mgba_tokens_total", totalUsage, { iteration, runId }),
+    "# HELP pss_mgba_token_cost_usd Estimated model token cost in USD.",
+    "# TYPE pss_mgba_token_cost_usd gauge",
+    `pss_mgba_token_cost_usd${labels({ iteration, kind: "turn", runId })} ${tokenCost.turnEstimatedCostUsd}`,
+    `pss_mgba_token_cost_usd${labels({ iteration, kind: "total", runId })} ${tokenCost.totalEstimatedCostUsd}`,
+    "# HELP pss_mgba_token_cost_calls_total Token usage calls by pricing resolution status.",
+    "# TYPE pss_mgba_token_cost_calls_total counter",
+    `pss_mgba_token_cost_calls_total${labels({ iteration, kind: "priced", runId })} ${tokenCost.pricedCalls}`,
+    `pss_mgba_token_cost_calls_total${labels({ iteration, kind: "unpriced", runId })} ${tokenCost.unpricedCalls}`,
     "",
   ].join("\n");
 }

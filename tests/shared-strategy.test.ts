@@ -1,6 +1,6 @@
 import { mkdtemp } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MgbaObservation } from "../src/observation";
 import {
@@ -53,8 +53,7 @@ describe("shared strategy memory", () => {
       },
       evidenceCount: 1,
       phase: "bedroom_2f",
-      stateKey:
-        "map=38;x=3;y=6;facing=down;battle=0;dialogue=0;menu=0",
+      stateKey: "map=38;x=3;y=6;facing=down;battle=0;dialogue=0;menu=0",
       waypoint: "stair-warp",
     });
   });

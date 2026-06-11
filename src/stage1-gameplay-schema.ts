@@ -6,6 +6,16 @@ export const STAGE1_GAMEPLAY_SCHEMA_VERSION =
 export const STAGE1_GAMEPLAY_GAME = "pokemon-red" as const;
 export const STAGE1_GAMEPLAY_STAGE = "stage1" as const;
 export const STAGE1_GAMEPLAY_VICTORY_CONDITION = "reach-viridian-city" as const;
+export const STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID =
+  "stage1-viridian-city-reached" as const;
+
+export const STAGE1_VIRIDIAN_CITY_MILESTONE_IDS = [
+  "stage1-viridian-player-control",
+  "stage1-viridian-pallet-town-exit",
+  "stage1-viridian-route-1-entered",
+  "stage1-viridian-route-1-north-progress",
+  STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+] as const;
 
 export const STAGE1_RULE_SCOPES = [
   "control",
@@ -314,6 +324,15 @@ const evaluatorIdPattern = /^evaluator:[a-z0-9][a-z0-9._/-]*$/;
 const overrideIdPattern = /^override:[a-z0-9][a-z0-9._/-]*$/;
 const stage1EntityIdPattern =
   /^(candidate|evaluator|methodology|override|quest|route|rule|skill|world):[a-z0-9][a-z0-9._/-]*$/;
+const stage1ViridianCityMilestoneRanks = new Map<
+  Stage1ViridianCityMilestoneId,
+  number
+>(
+  STAGE1_VIRIDIAN_CITY_MILESTONE_IDS.map((milestoneId, index) => [
+    milestoneId,
+    index,
+  ])
+);
 
 const conditionValueSchema = z.union([
   z.string(),
@@ -542,6 +561,98 @@ export const stage1SkillRuntimeOutputSchema = z
     successCriteria: z.array(stage1SuccessCriterionSchema).default([]),
   })
   .strict();
+
+export const stage1ViridianCityRuntimeGameStateSchema = z
+  .object({
+    battle: z.boolean(),
+    mapId: z.number().int().nonnegative().nullable(),
+    phase: z.string().min(1),
+    readStatus: z.enum(["available", "unavailable"]),
+    x: z.number().int().nonnegative().nullable(),
+    y: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+
+export const stage1ViridianCityProgressStateSchema = z
+  .object({
+    completedMilestoneIds: z
+      .array(z.enum(STAGE1_VIRIDIAN_CITY_MILESTONE_IDS))
+      .default([]),
+    currentMilestoneId: z.enum(STAGE1_VIRIDIAN_CITY_MILESTONE_IDS).nullable(),
+    evidence: z.array(z.string().min(1)).default([]),
+    furthestMilestoneId: z.enum(STAGE1_VIRIDIAN_CITY_MILESTONE_IDS).nullable(),
+    objective: z.literal(STAGE1_GAMEPLAY_VICTORY_CONDITION),
+    progressScore: z.number().min(0).max(1),
+    runtimeGameState: stage1ViridianCityRuntimeGameStateSchema,
+    status: z.enum(STAGE1_QUEST_PROGRESS_STATUSES),
+    updatedFrame: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (state) =>
+      state.currentMilestoneId === null ||
+      state.runtimeGameState.readStatus === "available",
+    {
+      message:
+        "known Viridian milestone progress requires available runtimeGameState RAM evidence",
+      path: ["runtimeGameState", "readStatus"],
+    }
+  )
+  .refine(
+    (state) =>
+      state.currentMilestoneId === null ||
+      (state.runtimeGameState.mapId !== null &&
+        state.runtimeGameState.x !== null &&
+        state.runtimeGameState.y !== null),
+    {
+      message:
+        "known Viridian milestone progress requires runtimeGameState mapId and x/y evidence",
+      path: ["runtimeGameState"],
+    }
+  )
+  .refine(
+    (state) =>
+      state.currentMilestoneId === null ||
+      state.furthestMilestoneId === null ||
+      stage1ViridianCityMilestoneRank(state.furthestMilestoneId) >=
+        stage1ViridianCityMilestoneRank(state.currentMilestoneId),
+    {
+      message: "furthestMilestoneId must not rank before currentMilestoneId",
+      path: ["furthestMilestoneId"],
+    }
+  )
+  .refine(
+    (state) =>
+      !state.completedMilestoneIds.includes(
+        STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID
+      ) ||
+      state.currentMilestoneId === STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID ||
+      state.furthestMilestoneId === STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+    {
+      message:
+        "terminal Viridian milestone completion requires current or furthest terminal milestone",
+      path: ["completedMilestoneIds"],
+    }
+  )
+  .refine((state) => state.status !== "complete" || state.progressScore === 1, {
+    message: "complete Viridian progress requires a progressScore of 1",
+    path: ["progressScore"],
+  })
+  .refine(
+    (state) =>
+      state.status !== "complete" ||
+      (state.furthestMilestoneId ===
+        STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID &&
+        state.runtimeGameState.readStatus === "available" &&
+        state.runtimeGameState.mapId === 1 &&
+        state.runtimeGameState.phase === "viridian" &&
+        state.runtimeGameState.battle === false),
+    {
+      message:
+        "complete Viridian progress requires runtimeGameState to report Viridian City outside battle",
+      path: ["runtimeGameState"],
+    }
+  );
 
 export const stage1MapCoordinateSchema = z
   .object({
@@ -1154,6 +1265,14 @@ export type Stage1SkillRuntimeInput = z.infer<
 export type Stage1SkillRuntimeOutput = z.infer<
   typeof stage1SkillRuntimeOutputSchema
 >;
+export type Stage1ViridianCityMilestoneId =
+  (typeof STAGE1_VIRIDIAN_CITY_MILESTONE_IDS)[number];
+export type Stage1ViridianCityRuntimeGameState = z.infer<
+  typeof stage1ViridianCityRuntimeGameStateSchema
+>;
+export type Stage1ViridianCityProgressState = z.infer<
+  typeof stage1ViridianCityProgressStateSchema
+>;
 export type Stage1MapCoordinate = z.infer<typeof stage1MapCoordinateSchema>;
 export type Stage1WorldCoordinate = z.infer<typeof stage1WorldCoordinateSchema>;
 export type Stage1WorldMapBounds = z.infer<typeof stage1WorldMapBoundsSchema>;
@@ -1217,6 +1336,12 @@ export function validateStage1GameplayLibrary(
   input: unknown
 ): Stage1GameplayLibrary {
   return stage1GameplayLibrarySchema.parse(input);
+}
+
+export function validateStage1ViridianCityProgressState(
+  input: unknown
+): Stage1ViridianCityProgressState {
+  return stage1ViridianCityProgressStateSchema.parse(input);
 }
 
 export function validateStage1RouteKnowledge(
@@ -1286,4 +1411,10 @@ export function createStage1Id(
     );
   }
   return `${kind}:${slug}`;
+}
+
+function stage1ViridianCityMilestoneRank(
+  milestoneId: Stage1ViridianCityMilestoneId
+): number {
+  return stage1ViridianCityMilestoneRanks.get(milestoneId) ?? -1;
 }

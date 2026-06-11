@@ -6,6 +6,8 @@ import {
   STAGE1_GAMEPLAY_SCHEMA_VERSION,
   STAGE1_GAMEPLAY_STAGE,
   STAGE1_GAMEPLAY_VICTORY_CONDITION,
+  STAGE1_VIRIDIAN_CITY_MILESTONE_IDS,
+  STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
   type Stage1GameplayRule,
   type Stage1GameplaySkill,
   type Stage1HumanOverride,
@@ -21,12 +23,14 @@ import {
   stage1SafeToolCallSchema,
   stage1SkillRuntimeInputSchema,
   stage1SkillRuntimeOutputSchema,
+  stage1ViridianCityProgressStateSchema,
   validateStage1GameplayRule,
   validateStage1GameplaySkill,
   validateStage1HumanOverride,
   validateStage1LearnedCandidate,
   validateStage1Quest,
   validateStage1RouteKnowledge,
+  validateStage1ViridianCityProgressState,
 } from "../src/stage1-gameplay-schema";
 
 function routeRule(
@@ -641,6 +645,119 @@ describe("Stage 1 gameplay rule and skill schemas", () => {
 
     expect(runtimeInput.frame).toBe(2400);
     expect(runtimeOutput.candidates[0]?.toolCall.toolName).toBe("mgba_hold");
+  });
+
+  it("defines ordered Stage 1 Viridian City milestone identifiers", () => {
+    expect(STAGE1_VIRIDIAN_CITY_MILESTONE_IDS).toEqual([
+      "stage1-viridian-player-control",
+      "stage1-viridian-pallet-town-exit",
+      "stage1-viridian-route-1-entered",
+      "stage1-viridian-route-1-north-progress",
+      "stage1-viridian-city-reached",
+    ]);
+    expect(STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID).toBe(
+      "stage1-viridian-city-reached"
+    );
+  });
+
+  it("validates Viridian progress state from runtimeGameState RAM evidence", () => {
+    const parsed = validateStage1ViridianCityProgressState({
+      completedMilestoneIds: [
+        "stage1-viridian-player-control",
+        "stage1-viridian-pallet-town-exit",
+        "stage1-viridian-route-1-entered",
+      ],
+      currentMilestoneId: "stage1-viridian-route-1-north-progress",
+      evidence: ["RuntimeGameState RAM map/position reports Route 1 progress."],
+      furthestMilestoneId: "stage1-viridian-route-1-north-progress",
+      objective: STAGE1_GAMEPLAY_VICTORY_CONDITION,
+      progressScore: 0.75,
+      runtimeGameState: {
+        battle: false,
+        mapId: 12,
+        phase: "route1",
+        readStatus: "available",
+        x: 10,
+        y: 8,
+      },
+      status: "active",
+      updatedFrame: 2400,
+    });
+
+    expect(stage1ViridianCityProgressStateSchema.parse(parsed)).toMatchObject({
+      currentMilestoneId: "stage1-viridian-route-1-north-progress",
+      objective: STAGE1_GAMEPLAY_VICTORY_CONDITION,
+      runtimeGameState: {
+        mapId: 12,
+        phase: "route1",
+        readStatus: "available",
+      },
+    });
+  });
+
+  it("requires runtimeGameState availability before claiming known Viridian progress", () => {
+    expect(() =>
+      validateStage1ViridianCityProgressState({
+        completedMilestoneIds: [],
+        currentMilestoneId: "stage1-viridian-player-control",
+        furthestMilestoneId: "stage1-viridian-player-control",
+        objective: STAGE1_GAMEPLAY_VICTORY_CONDITION,
+        progressScore: 0.2,
+        runtimeGameState: {
+          battle: false,
+          mapId: null,
+          phase: "unknown",
+          readStatus: "unavailable",
+          x: null,
+          y: null,
+        },
+        status: "active",
+      })
+    ).toThrow(
+      "known Viridian milestone progress requires available runtimeGameState RAM evidence"
+    );
+  });
+
+  it("requires Viridian runtimeGameState evidence for terminal completion", () => {
+    expect(() =>
+      validateStage1ViridianCityProgressState({
+        completedMilestoneIds: [STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID],
+        currentMilestoneId: STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+        furthestMilestoneId: STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+        objective: STAGE1_GAMEPLAY_VICTORY_CONDITION,
+        progressScore: 1,
+        runtimeGameState: {
+          battle: false,
+          mapId: 12,
+          phase: "route1",
+          readStatus: "available",
+          x: 10,
+          y: 0,
+        },
+        status: "complete",
+      })
+    ).toThrow(
+      "complete Viridian progress requires runtimeGameState to report Viridian City outside battle"
+    );
+
+    expect(
+      validateStage1ViridianCityProgressState({
+        completedMilestoneIds: [STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID],
+        currentMilestoneId: STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+        furthestMilestoneId: STAGE1_VIRIDIAN_CITY_TERMINAL_MILESTONE_ID,
+        objective: STAGE1_GAMEPLAY_VICTORY_CONDITION,
+        progressScore: 1,
+        runtimeGameState: {
+          battle: false,
+          mapId: 1,
+          phase: "viridian",
+          readStatus: "available",
+          x: 10,
+          y: 30,
+        },
+        status: "complete",
+      }).status
+    ).toBe("complete");
   });
 
   it("validates world and route knowledge for the Viridian City route objective", () => {

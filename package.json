@@ -30,7 +30,7 @@
     "trace:report": "tsx src/trace-report.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.0-canary.48",

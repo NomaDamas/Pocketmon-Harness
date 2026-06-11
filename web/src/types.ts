@@ -84,6 +84,7 @@ export type ViewerEvent = ObservationViewerEvent | AgentViewerEvent;
 
 export interface ViewerRun {
   avgTokensPerTurn?: number;
+  blockedRepeatedActionsTotal?: number;
   experimentId?: string;
   hasEvents: boolean;
   hasTokenUsage: boolean;
@@ -102,6 +103,8 @@ export interface ViewerRun {
   supervisorInterventions?: number;
   totalTokens?: TokenUsageSnapshot;
   turns?: number;
+  verificationFailuresTotal?: number;
+  verificationSuccessesTotal?: number;
 }
 
 export interface ViewerEmulatorSlot {

@@ -2,9 +2,62 @@ import type { MgbaHttpClient } from "./mgba-http";
 
 export type PokemonStateReadStatus = "available" | "unavailable";
 export type PokemonDirection = "down" | "up" | "left" | "right" | "unknown";
+export type PokemonBattleActionReadStatus =
+  | "available"
+  | "partial"
+  | "unavailable";
+export type PokemonBattleActionKind = "fight" | "item" | "run" | "switch";
+export type PokemonBattleUiMode =
+  | "bag-item-select"
+  | "main-menu"
+  | "move-select"
+  | "party-select"
+  | "unknown";
+
+export interface PokemonBattleUiState {
+  cursorIndex: number | null;
+  mode: PokemonBattleUiMode;
+  source: "ram" | "scripted-default" | "visual-fallback";
+}
+
+export interface PokemonBattleMoveSlot {
+  disabled?: boolean;
+  moveId: number | null;
+  name?: string;
+  pp: number | null;
+  slot: 1 | 2 | 3 | 4;
+}
+
+export interface PokemonBattleItemSlot {
+  disabled?: boolean;
+  itemId: number | null;
+  name?: string;
+  quantity: number | null;
+  slot: number;
+  usableInBattle: boolean | "unknown";
+}
+
+export interface PokemonBattlePartySlot {
+  active: boolean;
+  fainted?: boolean;
+  hp: number | null;
+  name?: string;
+  slot: 1 | 2 | 3 | 4 | 5 | 6;
+  speciesId: number | null;
+}
+
+export interface PokemonBattleActionState {
+  canRun: boolean | "unknown";
+  items: readonly PokemonBattleItemSlot[];
+  moves: readonly PokemonBattleMoveSlot[];
+  party: readonly PokemonBattlePartySlot[];
+  readStatus: PokemonBattleActionReadStatus;
+  ui: PokemonBattleUiState;
+}
 
 export interface PokemonStateObservation {
   battle: boolean;
+  battleActionState?: PokemonBattleActionState;
   battleResult: number | null;
   battleType: number | null;
   dialogueLike: boolean | "visual-fallback";

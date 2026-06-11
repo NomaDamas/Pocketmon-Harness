@@ -340,7 +340,7 @@ export const STAGE1_VIRIDIAN_ACTIVE_RULES = [
   }),
   activeRule({
     description:
-      "If an incidental Route 1 wild battle appears, prefer A on the default battle choice to clear the mode and return to route progress.",
+      "If a Stage 1 battle appears, treat it as a deterministic battle-policy event that must be cleared before route progress resumes.",
     effects: [
       {
         action: {
@@ -350,12 +350,12 @@ export const STAGE1_VIRIDIAN_ACTIVE_RULES = [
         },
         confidenceDelta: 0.1,
         description:
-          "Use the default battle confirmation path instead of exposing non-button battle control tools.",
+          "Use the deterministic BasicBattlePolicy path instead of fallback analyst handling or non-button battle control tools.",
         kind: "prefer-action",
         priorityDelta: 18,
       },
     ],
-    id: "rule:stage1.battle.clear-incidental-battle",
+    id: "rule:stage1.battle.clear-rival-battle",
     preconditions: [
       {
         evidence: ["Battle state is visible in Pokemon Red RAM"],
@@ -369,14 +369,14 @@ export const STAGE1_VIRIDIAN_ACTIVE_RULES = [
     trigger: {
       conditions: [
         {
-          evidence: ["Wild battle mode blocks overworld route progress"],
+          evidence: ["Rival battle mode blocks overworld route progress"],
           field: "state.battle",
           operator: "equals",
           value: true,
         },
       ],
       kind: "observation",
-      label: "incidental battle clear",
+      label: "deterministic rival battle clear",
     },
   }),
   activeRule({

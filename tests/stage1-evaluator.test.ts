@@ -133,6 +133,7 @@ describe("Stage 1 evaluator output schema", () => {
         fps: 59.7,
         frameEnd: 1240,
         frameStart: 1000,
+        milestoneId: "first-map-transition",
         runId: "00001-stage1",
         tokenUsage: {
           totalTokens: 4096,
@@ -200,6 +201,7 @@ describe("Stage 1 Viridian City success evaluator", () => {
         frameEnd: 1024,
         frameStart: 960,
         fps: 59.7,
+        milestoneId: "first-map-transition",
       },
     });
 
@@ -207,9 +209,21 @@ describe("Stage 1 Viridian City success evaluator", () => {
       confidence: 0.95,
       metadata: {
         evaluatorId: "stage1.viridian-city-success",
+        extra: {
+          ram: {
+            current: {
+              mapId: POKEMON_RED_STAGE1_MAP_IDS.viridianCity,
+              milestoneId: "first-map-transition",
+              readStatus: "available",
+              x: 18,
+              y: 34,
+            },
+          },
+        },
         fps: 59.7,
         frameEnd: 1024,
         frameStart: 960,
+        milestoneId: "first-map-transition",
       },
       progressScore: 1,
       progressStatus: "victory",
@@ -284,6 +298,18 @@ describe("Stage 1 Viridian City success evaluator", () => {
 
     expect(output).toMatchObject({
       confidence: 0.2,
+      metadata: {
+        extra: {
+          ram: {
+            current: {
+              mapId: POKEMON_RED_STAGE1_MAP_IDS.viridianCity,
+              readStatus: "unavailable",
+              x: null,
+              y: null,
+            },
+          },
+        },
+      },
       progressScore: 0,
       progressStatus: "unknown",
     });
@@ -308,6 +334,7 @@ describe("Stage 1 map transition progress evaluator", () => {
         frameEnd: 260,
         frameStart: 120,
         fps: 59.7,
+        milestoneId: "first-map-transition",
       },
       previousState: pokemonState({
         mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
@@ -322,9 +349,28 @@ describe("Stage 1 map transition progress evaluator", () => {
       confidence: 0.92,
       metadata: {
         evaluatorId: "stage1.map-transition-progress",
+        extra: {
+          ram: {
+            current: {
+              mapId: POKEMON_RED_STAGE1_MAP_IDS.route1,
+              milestoneId: "first-map-transition",
+              readStatus: "available",
+              x: 10,
+              y: 35,
+            },
+            previous: {
+              mapId: POKEMON_RED_STAGE1_MAP_IDS.palletTown,
+              milestoneId: "first-map-transition",
+              readStatus: "available",
+              x: 10,
+              y: 0,
+            },
+          },
+        },
         fps: 59.7,
         frameEnd: 260,
         frameStart: 120,
+        milestoneId: "first-map-transition",
       },
       progressScore: 0.55,
       progressStatus: "progress",

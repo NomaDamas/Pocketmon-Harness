@@ -176,8 +176,9 @@ checked quickly.
 
 ## ⚙️ Requirements
 
-- Node.js 22 recommended. The package floor is Node 20, but current pnpm/tooling
-  paths are most stable on Node 22.
+- Node.js 22.22.2 or newer. The repository includes `.nvmrc` and
+  `.node-version`; run `nvm use` before `pnpm` commands so local shells and
+  automation do not fall back to Node 20.
 - pnpm 11.2.2
 - mGBA with the `mGBASocketServer.lua` script
 - `mGBA-http`
@@ -201,6 +202,7 @@ AI_MODEL=
 AI_MICRO_MODEL=gpt-5.3-codex-spark
 HARNESS_MAX_STEPS=120
 HARNESS_MAX_MINUTES=10
+HARNESS_STARTER_PREFERENCE=charmander
 METRICS_HTTP_HOST=0.0.0.0
 METRICS_HTTP_PORT=9464
 ```
@@ -336,6 +338,10 @@ HARNESS_MAX_TOKENS=200000
 HARNESS_MAX_MINUTES=5
 HARNESS_MAX_RAM_UNAVAILABLE_TURNS=1
 ```
+
+`HARNESS_STARTER_PREFERENCE` controls the deterministic Oak Lab starter target.
+Allowed values are `bulbasaur`, `charmander`, and `squirtle`; unset runs keep
+the deterministic default `charmander`.
 
 When a limit is reached, the run exits gracefully and records the stop reason in
 trace metadata.
@@ -666,6 +672,27 @@ Nothing moves from `planned` to `active` because it sounds plausible. It must
 produce trace evidence, pass tests, avoid regressions, and keep controller
 authority ahead of LLM fallback.
 
+### Gap-To-Test Traceability
+
+The current controller-primary closure work is locked by tests instead of README
+claims. This matrix is the handoff contract for future work:
+
+| Gap being closed | Runtime implementation | Guardrail tests |
+| --- | --- | --- |
+| LLM still acting like a one-button player | `src/index.ts`, `src/fallback-gate.ts`, and `src/deterministic-policy.ts` route known phases through controller decisions first, then admit bounded fallback only after controller verification fails | `tests/fallback-gate.test.ts`, `tests/deterministic-policy.test.ts`, `tests/runner.test.ts` |
+| RAM state not treated as controller authority | `src/pokemon-state.ts`, `src/phase-detector.ts`, and `src/deterministic-verification.ts` make map/x/y/battle/dialogue state part of phase, outcome, and failure decisions | `tests/phase-detector.test.ts`, `tests/deterministic-verification.test.ts`, `tests/observation.test.ts` |
+| Weak expected-outcome verification | `src/deterministic-verification.ts` verifies movement, dialogue/script progress, Oak checkpoints, starter sequence, and battle transition evidence before accepting progress | `tests/deterministic-verification.test.ts`, `tests/starter-preference.test.ts`, `tests/battle-policy.test.ts` |
+| Repeated fallback or loop without terminal evidence | `src/fallback-gate.ts`, `src/controller-primary-failure-report.ts`, `src/run-metrics.ts`, and `src/stop-controller.ts` cap fallback attempts and emit structured terminal failure reports | `tests/fallback-gate.test.ts`, `tests/controller-primary-failure-report.test.ts`, `tests/run-metrics.test.ts`, `tests/stop-controller.test.ts` |
+| Parallel agents not sharing useful subgoal evidence | `src/shared-strategy.ts` and `src/parallel-improvement.ts` keep batch-scoped tactical evidence separate from active rule promotion | `tests/shared-strategy.test.ts`, `tests/parallel-improvement.test.ts`, `tests/parallel-runner.test.ts` |
+| Guidebook hierarchy lacking pruning/backtracking | `src/strategy-tree.ts` records hypothesis/run-attempt branches and prunes weak branches before proposal promotion | `tests/strategy-tree.test.ts`, `tests/parallel-improvement.test.ts` |
+| Promotion safety boundary unclear | `src/parallel-promote.ts` keeps active rule/skill/pathfinder writes behind explicit promotion and QA gates | `tests/parallel-improvement.test.ts`, `tests/stage1-gameplay-schema.test.ts` |
+| Metrics not proving controller-primary behavior | `src/run-metrics.ts`, `src/run-summary.ts`, `src/run-trace.ts`, and `src/token-usage.ts` record deterministic action counts, fallback calls, verification failures, token ratios, and stop reasons | `tests/run-metrics.test.ts`, `tests/run-summary.test.ts`, `tests/run-trace.test.ts`, `tests/token-usage.test.ts` |
+| Viewer/TUI not showing the controller state clearly | `src/viewer-events.ts`, `src/viewer-recorder.ts`, `src/viewer-server.ts`, and `web/src/app.tsx` expose controller decisions, fallback, verification, and run health from local traces | `tests/viewer-events.test.ts`, `tests/viewer-server.test.ts`, `pnpm web:typecheck` |
+
+The remaining high-priority runtime gap is not architecture anymore; it is
+coverage. Stage 2+ needs more RAM-verified waypoints, quest memory, item/battle
+policy, and replay evidence before it can be marked active.
+
 ## 📊 Grafana
 
 Start the local observability stack:
@@ -691,6 +718,14 @@ Run the full guardrail before accepting changes or experiment evidence:
 
 ```bash
 pnpm typecheck && pnpm test && pnpm build && pnpm check
+```
+
+This project targets Node `>=22`. Server listen tests are opt-in because some
+sandboxed runners reject `127.0.0.1` binds with `EPERM`; run them explicitly in a
+normal local environment:
+
+```bash
+POKEMON_ENABLE_SERVER_TESTS=1 pnpm test -- tests/metrics-server.test.ts tests/viewer-server.test.ts
 ```
 
 Useful focused commands while iterating:

@@ -72,6 +72,18 @@ describe("planStage1Path", () => {
     expect(plan?.reason).toContain("press/hold Up");
   });
 
+  it("returns no movement plan after RuntimeGameState reports Viridian City", () => {
+    expect(
+      planStage1Path({
+        state: {
+          ...route1State,
+          mapId: POKEMON_RED_STAGE1_MAP_IDS.viridianCity,
+          position: { x: 10, y: 30 },
+        },
+      })
+    ).toBeUndefined();
+  });
+
   it("backtracks laterally after the same local Up edge fails at least 3 times", () => {
     const stuckMemory: StuckMemorySnapshot = {
       failedMovementEdges: [
@@ -95,6 +107,54 @@ describe("planStage1Path", () => {
       blockedActions: ["Up"],
     });
     expect(plan?.reason).toContain("blocked=Up");
+  });
+
+  it("does not block the edge before 3 no-progress attempts", () => {
+    const stuckMemory: StuckMemorySnapshot = {
+      failedMovementEdges: [
+        {
+          action: "hold:Up",
+          attempts: 2,
+          context: "map=12 x=10 y=18 facing=up",
+          lastSeenTurn: 6,
+        },
+      ],
+      repeatedStateContexts: [],
+      recentRecoveryAttempts: [],
+      stuckEvents: 0,
+    };
+
+    const plan = planStage1Path({ state: route1State, stuckMemory });
+
+    expect(plan).toMatchObject({
+      action: "Up",
+      backtrackingActive: false,
+      blockedActions: [],
+    });
+  });
+
+  it("blocks only failed edges matching the current RuntimeGameState position", () => {
+    const stuckMemory: StuckMemorySnapshot = {
+      failedMovementEdges: [
+        {
+          action: "hold:Up",
+          attempts: 3,
+          context: "map=12 x=10 y=19 facing=up",
+          lastSeenTurn: 7,
+        },
+      ],
+      repeatedStateContexts: [],
+      recentRecoveryAttempts: [],
+      stuckEvents: 1,
+    };
+
+    const plan = planStage1Path({ state: route1State, stuckMemory });
+
+    expect(plan).toMatchObject({
+      action: "Up",
+      backtrackingActive: false,
+      blockedActions: [],
+    });
   });
 
   it("does not produce a route movement plan during battle", () => {

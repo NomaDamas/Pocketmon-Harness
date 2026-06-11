@@ -635,6 +635,14 @@ function RunMetadata({
         <MetaItem label="이벤트" value={run.hasEvents ? "있음" : "없음"} />
         <MetaItem label="토큰" value={run.hasTokenUsage ? "있음" : "없음"} />
         <MetaItem
+          label="검증 실패"
+          value={`${formatNumber(run.verificationFailuresTotal ?? 0)}회`}
+        />
+        <MetaItem
+          label="반복 차단"
+          value={`${formatNumber(run.blockedRepeatedActionsTotal ?? 0)}회`}
+        />
+        <MetaItem
           label="토큰 소모"
           value={
             totalTokenUsage
@@ -909,7 +917,15 @@ function ParallelRunCard({
           }
         />
         <MetaItem
-          label="막힘"
+          label="반복 차단"
+          value={`${formatNumber(run.blockedRepeatedActionsTotal ?? 0)}회`}
+        />
+        <MetaItem
+          label="검증 실패"
+          value={`${formatNumber(run.verificationFailuresTotal ?? 0)}회`}
+        />
+        <MetaItem
+          label="막힘 이벤트"
           value={`${formatNumber(run.stuckEvents ?? 0)}회`}
         />
         <MetaItem

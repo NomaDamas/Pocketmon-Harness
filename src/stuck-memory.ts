@@ -33,6 +33,7 @@ export interface RepeatedStateContext {
 }
 
 export interface StuckMemorySnapshot {
+  blockedRepeatedActions?: number;
   failedMovementEdges: readonly FailedMovementEdge[];
   recentRecoveryAttempts: readonly RecoveryAttempt[];
   repeatedStateContexts: readonly RepeatedStateContext[];
@@ -64,6 +65,7 @@ export class StuckMemory {
   #lastFailedKey: string | undefined;
   #lastRepeatedContextKey: string | undefined;
   #pendingMovementAttempt: PendingMovementAttempt | undefined;
+  #blockedRepeatedActions = 0;
   #repeatedFailedMovementAttempts = 0;
   #repeatedStationaryContextAttempts = 0;
   #stuckEvents = 0;
@@ -92,6 +94,7 @@ export class StuckMemory {
 
     const attempts = this.#repeatedFailedMovementAttempts;
     if (attempts === STUCK_THRESHOLD) {
+      this.#blockedRepeatedActions += 1;
       this.#stuckEvents += 1;
     }
 
@@ -158,6 +161,7 @@ export class StuckMemory {
     this.#lastFailedKey = key;
     this.#repeatedFailedMovementAttempts = attempts;
     if (attempts === STUCK_THRESHOLD) {
+      this.#blockedRepeatedActions += 1;
       this.#stuckEvents += 1;
     }
     this.#recordFailedEdge({
@@ -170,6 +174,7 @@ export class StuckMemory {
 
   snapshot(): StuckMemorySnapshot {
     return {
+      blockedRepeatedActions: this.#blockedRepeatedActions,
       failedMovementEdges: [...this.#failedMovementEdges.values()],
       repeatedStateContexts: [...this.#repeatedStateContexts.values()],
       recentRecoveryAttempts: [...this.#recentRecoveryAttempts],

@@ -1,6 +1,7 @@
 import type { MgbaObservation } from "./observation";
 import type { PokemonStateObservation } from "./pokemon-state";
 import { POKEMON_RED_STAGE1_MAP_IDS } from "./stage1-evaluator";
+import { isOakLabStarterSelectionPosition } from "./starter-preference";
 import type { StuckMemorySnapshot } from "./stuck-memory";
 
 export type PokemonPhase =
@@ -19,7 +20,7 @@ export type PokemonPhase =
   | "viridian";
 
 export interface PhaseDetectionInput {
-  observation: MgbaObservation;
+  observation: Pick<MgbaObservation, "state">;
   recentActions?: readonly string[];
   stuckMemory?: StuckMemorySnapshot;
 }
@@ -50,7 +51,11 @@ export function detectPokemonPhase({
     return phase("name_entry", "name-entry-map", "finish-name-entry");
   }
   if (state.battle) {
-    return phase("rival_battle", "battle-flag-active", "win-current-battle");
+    return phase(
+      "rival_battle",
+      "deterministic-rival-battle-event",
+      "win-current-battle"
+    );
   }
   if (state.mapId === RED_HOUSE_2F_MAP_ID) {
     return phase("bedroom_2f", "red-bedroom-map", "stair-warp");
@@ -59,10 +64,15 @@ export function detectPokemonPhase({
     return phase("house_1f", "red-house-1f-map", "front-door-warp");
   }
   if (state.mapId === OAK_LAB_MAP_ID) {
+    const oakLabPhase = classifyOakLabPhase(state);
     return phase(
-      classifyOakLabPhase(state),
-      "oak-lab-map",
-      "advance-oak-lab-script"
+      oakLabPhase,
+      oakLabPhase === "starter_selection"
+        ? "oak-lab-starter-ram-controller-target"
+        : "oak-lab-map",
+      oakLabPhase === "starter_selection"
+        ? "select-starter"
+        : "advance-oak-lab-script"
     );
   }
   if (state.mapId === POKEMON_RED_STAGE1_MAP_IDS.palletTown) {
@@ -92,10 +102,10 @@ function classifyOakLabPhase(state: PokemonStateObservation): PokemonPhase {
   if (state.battle) {
     return "rival_battle";
   }
-  if ((state.position.y ?? 99) <= 4) {
-    return "lab_before_starter";
+  if (isOakLabStarterSelectionPosition(state)) {
+    return "starter_selection";
   }
-  return "starter_selection";
+  return "lab_before_starter";
 }
 
 function isOakTriggerCandidate(
@@ -107,6 +117,9 @@ function isOakTriggerCandidate(
   }
   if (state.position.y > 2 || state.position.x < 8 || state.position.x > 12) {
     return false;
+  }
+  if (state.dialogueLike === true) {
+    return true;
   }
   return (
     stuckMemory?.failedMovementEdges.some(

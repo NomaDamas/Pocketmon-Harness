@@ -110,6 +110,7 @@ describe("mGBA observation input", () => {
     ]);
     const text = input[0]?.type === "text" ? input[0].text : "";
     expect(text).toContain("Current compact Pokémon state:");
+    expect(text).toContain("harnessPhase: route1");
     expect(text).toContain("readStatus: available");
     expect(text).toContain("mapId: 12");
     expect(text).toContain("position: x=10, y=14");
@@ -144,6 +145,11 @@ describe("mGBA observation input", () => {
     expect(input[0]).toEqual(
       expect.objectContaining({
         text: expect.stringContaining("readStatus: unavailable"),
+      })
+    );
+    expect(input[0]).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("harnessPhase: unknown"),
       })
     );
   });

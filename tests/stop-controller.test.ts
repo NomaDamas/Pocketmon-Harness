@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHarnessEnv } from "../src/env";
 import { shouldStopHarness } from "../src/stop-controller";
 
 function state({
@@ -21,8 +22,10 @@ function state({
     },
     ramUnavailableFallbacks,
     tokenUsage: {
-      totalUsage: {
-        totalTokens,
+      tokenCost: {
+        totalUsage: {
+          totalTokens,
+        },
       },
     },
     startedAtMs,
@@ -34,6 +37,23 @@ describe("shouldStopHarness", () => {
   it("stops when max step budget is reached", () => {
     expect(
       shouldStopHarness({ maxSteps: 50 }, state({ controlToolCalls: 50 }))
+    ).toBe("max-steps:50");
+  });
+
+  it("uses HARNESS_MAX_STEPS=50 to stop gracefully before step 51", () => {
+    const env = createHarnessEnv({ HARNESS_MAX_STEPS: "50" });
+
+    expect(
+      shouldStopHarness(
+        { maxSteps: env.HARNESS_MAX_STEPS },
+        state({ controlToolCalls: 49 })
+      )
+    ).toBeUndefined();
+    expect(
+      shouldStopHarness(
+        { maxSteps: env.HARNESS_MAX_STEPS },
+        state({ controlToolCalls: 50 })
+      )
     ).toBe("max-steps:50");
   });
 

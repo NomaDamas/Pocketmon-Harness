@@ -45,8 +45,8 @@ export function formatStage1RuntimePlan({
     `- evaluator: victory=${victory.progressStatus === "victory"} progress=${victory.progressStatus}`,
     `- pathfinder: ${formatPathPlan(pathPlan)}`,
     `- active rules: ${activeRules.map((rule) => rule.id).join(", ") || "none"}`,
-    `- recommended skill: ${recoveryAction ? "skill:name-entry.confirm-default-or-end" : (selectedSkill?.id ?? "fallback:vision-guided-supervised-control")}`,
-    `- recommended action: ${formatRecommendedAction(selectedSkill, pathPlan, recoveryAction)}`,
+    `- recommended skill: ${formatRecommendedSkill(state, selectedSkill, recoveryAction)}`,
+    `- recommended action: ${formatRecommendedAction(state, selectedSkill, pathPlan, recoveryAction)}`,
     `- recent action diversity guard: ${recentActions.length >= 3 ? "avoid same-state/same-action repetition at 3+ attempts" : "collect evidence before declaring a loop"}`,
     "- control boundary: only mgba_tap/mgba_tap_many/mgba_hold/mgba_hold_many/mgba_release; never reset, reload, or delete saves",
   ].join("\n");
@@ -75,6 +75,12 @@ function selectRuntimeRules(
     }
     if (state.battle) {
       return rule.scope === "battle";
+    }
+    if (state.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity) {
+      return (
+        rule.scope === "mode" ||
+        rule.id === "rule:viridian-city.mark-stage1-victory"
+      );
     }
     if (
       state.mapId === POKEMON_RED_STAGE1_MAP_IDS.palletTown ||
@@ -122,13 +128,37 @@ function selectRuntimeSkill(
   return;
 }
 
+function formatRecommendedSkill(
+  state: PokemonStateObservation,
+  skill: (typeof STAGE1_VIRIDIAN_ACTIVE_SKILLS)[number] | undefined,
+  recoveryAction: ReturnType<typeof chooseNameEntryRecoveryAction>
+): string {
+  if (state.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity) {
+    return "stage1:victory-reached";
+  }
+  if (recoveryAction) {
+    return "skill:name-entry.confirm-default-or-end";
+  }
+  if (state.battle) {
+    return "policy:battle.basic-battle-policy";
+  }
+  return skill?.id ?? "fallback:vision-guided-supervised-control";
+}
+
 function formatRecommendedAction(
+  state: PokemonStateObservation,
   skill: (typeof STAGE1_VIRIDIAN_ACTIVE_SKILLS)[number] | undefined,
   pathPlan: ReturnType<typeof planStage1Path> | undefined,
   recoveryAction: ReturnType<typeof chooseNameEntryRecoveryAction>
 ): string {
+  if (state.mapId === POKEMON_RED_STAGE1_MAP_IDS.viridianCity) {
+    return `stop route movement; Stage 1 victory reached from RuntimeGameState mapId=${POKEMON_RED_STAGE1_MAP_IDS.viridianCity}`;
+  }
   if (recoveryAction) {
     return `${recoveryAction.toolName} ${recoveryAction.button}; ${recoveryAction.reason}`;
+  }
+  if (state.battle) {
+    return "BattlePolicy deterministic rival-battle event; execute only actions enumerated from runtimeGameState.battleActionState";
   }
   const isRecoverySkill =
     skill?.id === "skill:route-1.lateral-obstacle-recovery";
