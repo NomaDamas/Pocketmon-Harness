@@ -5,7 +5,7 @@ task_type: "code"
 brownfield_context:
   project_type: "brownfield"
   context_references:
-    - path: "/Users/jinminseong/Desktop/pocketmon-harness"
+    - path: "."
       role: "primary"
       summary: "TypeScript Node 22 harness using @minpeter/pss-runtime, mGBA-http, screenshot/RAM observation, supervisor-normalized button tools, traces, metrics, and tests."
   existing_patterns:

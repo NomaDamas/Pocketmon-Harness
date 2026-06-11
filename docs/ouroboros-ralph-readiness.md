@@ -11,8 +11,9 @@ Stage 1 foundation is implemented for the Pokemon Red autonomous harness:
 - Evidence-driven patch candidate scaffolding without directly mutating active knowledge.
 - Read-only TUI observer over trace files.
 
-The stale Ouroboros session from the original local run was closed by appending
-the same terminal event type used by the official repository code:
+The stale Ouroboros session from the original local run was closed in the local
+operator environment. The repository intentionally does not include, require, or
+reference the global Ouroboros database.
 
 ```text
 orchestrator.session.cancelled
@@ -20,11 +21,10 @@ session: orch_d43d5ea98fe3
 reason: stale run stopped after manual completion and local evaluation passed
 ```
 
-A DB backup was created before the event append:
-
-```text
-~/.ouroboros/ouroboros.db.backup-before-pocketmon-cancel-20260606
-```
+Do not commit `~/.ouroboros`, `ouroboros.db`, global event-store backups, or
+other projects' sessions into this repository. The only Ouroboros material that
+belongs here is project-local specification and verification evidence for
+Pocketmon Harness.
 
 ## Runtime Commands
 
@@ -73,7 +73,7 @@ When the MCP tools are available, start Ralph with the validated seed:
 ```text
 lineage_id: ralph-pokemon-red-stage1-20260606
 seed_content: pokemon-red-stage1-autonomous-harness.seed.yaml
-project_dir: /Users/jinminseong/Desktop/pocketmon-harness
+project_dir: .
 execute: true
 parallel: true
 skip_qa: false
@@ -103,11 +103,12 @@ Known follow-up gaps:
 
 ## Guardrail
 
-Use Node 22 locally:
+Use the project-pinned Node 22 locally:
 
 ```bash
-env PATH=/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:$PATH pnpm typecheck
-env PATH=/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:$PATH pnpm test
-env PATH=/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:$PATH pnpm build
-env PATH=/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:$PATH pnpm check
+nvm use
+pnpm typecheck
+pnpm test:ci
+pnpm build
+pnpm check
 ```

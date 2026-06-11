@@ -228,7 +228,7 @@ Start mGBA and `mGBA-http` separately, then run the harness:
 ```bash
 mkdir -p .pss-mgba/saves
 /Applications/mGBA.app/Contents/MacOS/mGBA \
-  -C savegamePath=/Users/jinminseong/Desktop/pocketmon-harness/.pss-mgba/saves \
+  -C savegamePath="$PWD/.pss-mgba/saves" \
   /absolute/path/to/legal/rom.gb
 POKEMON_PARALLEL_MGBA_PORTS=5100 scripts/start-mgba-http-parallel.sh
 pnpm dev
@@ -238,7 +238,7 @@ If your mGBA build does not support a CLI `--script` flag, open
 `Tools > Scripting...` inside mGBA and run:
 
 ```lua
-dofile("/Users/jinminseong/Desktop/pocketmon-harness/.local-tools/mgba-http/mGBASocketServer.lua")
+dofile("<repo-root>/.local-tools/mgba-http/mGBASocketServer.lua")
 ```
 
 The writable `savegamePath` avoids mGBA's `Failed to open save file` warning
@@ -255,8 +255,8 @@ Port `5100` avoids macOS services that commonly occupy or intercept port `5000`:
 mkdir -p .pss-mgba/saves
 
 /Applications/mGBA.app/Contents/MacOS/mGBA \
-  -C savegamePath=/Users/jinminseong/Desktop/pocketmon-harness/.pss-mgba/saves \
-  /Users/jinminseong/Downloads/Pokemon\ -\ Red\ Version.gb
+  -C savegamePath="$PWD/.pss-mgba/saves" \
+  /absolute/path/to/legal/pokemon-red.gb
 
 # Terminal 2: mGBA HTTP bridge
 POKEMON_PARALLEL_MGBA_PORTS=5100 scripts/start-mgba-http-parallel.sh

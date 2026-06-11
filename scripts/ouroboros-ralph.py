@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -24,12 +23,6 @@ from ouroboros.persistence.event_store import EventStore
 
 
 async def _main() -> int:
-    os.environ["PATH"] = (
-        "/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:"
-        "/Users/jinminseong/.nvm/versions/node/v20.8.0/bin:"
-        f"{os.environ.get('PATH', '')}"
-    )
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--lineage-id", default="ralph-pokemon-red-stage1-20260606")
     parser.add_argument("--project-dir", default=str(Path.cwd()))

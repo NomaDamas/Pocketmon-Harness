@@ -5,6 +5,11 @@
 .omo/
 .omx/
 .ouroboros_eval_artifact.md
+.ouroboros/*.db
+.ouroboros/*.db-*
+.ouroboros/*.sqlite
+.ouroboros/*.sqlite-*
+.ouroboros/*backup*
 
 runs/
 
@@ -13,6 +18,8 @@ node_modules/
 .local-tools/
 dist/
 coverage/
+__pycache__/
+*.pyc
 
 *.gb
 *.gbc

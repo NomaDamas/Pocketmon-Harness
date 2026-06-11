@@ -5,7 +5,7 @@ task_type: "code"
 brownfield_context:
   project_type: "brownfield"
   context_references:
-    - path: "/Users/jinminseong/Desktop/pocketmon-harness"
+    - path: "."
       role: "primary"
       summary: "TypeScript Pokemon Red mGBA harness with trace files, token usage, run metadata, Stage 1 rule/skill/evaluator foundation, and read-only TUI observer."
   existing_patterns:
@@ -62,7 +62,7 @@ acceptance_criteria:
 
 ralph_usage:
   lineage_id: "ralph-pokemon-red-macro-progress-20260606"
-  project_dir: "/Users/jinminseong/Desktop/pocketmon-harness"
+  project_dir: "."
   execute: true
   parallel: true
   skip_qa: false

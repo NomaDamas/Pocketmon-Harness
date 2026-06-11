@@ -10,7 +10,7 @@ task_type: code
 brownfield_context:
   project_type: brownfield
   context_references:
-    - path: /Users/jinminseong/Desktop/pocketmon-harness
+    - path: .
       role: primary
       summary: Existing Pokemon Red autonomous harness repository being upgraded from Stage 1 scaffold to stable controller-primary operation.
     - path: src/index.ts

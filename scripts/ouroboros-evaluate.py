@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 from pathlib import Path
 
 from ouroboros.mcp.tools.evaluation_handlers import EvaluateHandler
@@ -36,12 +35,6 @@ def _read_artifact(project_dir: Path) -> str:
 
 
 async def _main() -> int:
-    os.environ["PATH"] = (
-        "/Users/jinminseong/.nvm/versions/node/v22.22.2/bin:"
-        "/Users/jinminseong/.nvm/versions/node/v20.8.0/bin:"
-        f"{os.environ.get('PATH', '')}"
-    )
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--session-id", default=DEFAULT_SESSION_ID)
     parser.add_argument("--execution-id", default=DEFAULT_EXECUTION_ID)
